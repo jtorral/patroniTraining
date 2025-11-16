@@ -159,7 +159,7 @@ This ensures you have the correct file format, regardless of how you choose to r
 ## Getting started
 
 
-After completing the above steps of cloning the repo and creating the Docker image,  we will now use the genDeploy script to create our Docker environemnt.
+After completing the above steps of cloning the repo and creating the Docker image,  we will now use the genDeploy script to create our Docker environment.
 
 For reference only, here are the options for running genDeploy.
 
@@ -200,11 +200,11 @@ Now that you see what flags are for genDeploy,  lets run it for our environment 
 - **-m** sets up Postgres to use password_encryption of md5
 - **-n 5** creates a total of 5 containers
 - **-c pgha** the name each container will be given with a unique identifier behind it. ( ie. pgha1, pgha2 )
-**- w pghanet** will create a dedicated docker network called pghanet for our containers to run under
+- **- w pghanet** will create a dedicated docker network called pghanet for our containers to run under
 - **-s 192.168.50** will assign that subnet to the custom network pghanet
 - **-i rocky-pg17-bundle** is the image to use for creating the container
 
-Lastly, it will have generated the file **DockerRunThis.pgha** which is how we will manage our deploy.
+The above command will have generated the file **DockerRunThis.pgha** which is how we will manage our deploy.
 
 
 ## Important Note on IP Address Management with genDeploy
@@ -265,8 +265,8 @@ You have flexibility in how you refer to your nodes within configuration files.
 
 
 
-## Create the aliases
-
+## Create the aliases ( Optional for this tutorial )
+***This is optional as we will be using the host names for the etcd and patroni configurations.  It is included here solely to provide you with a complete understanding of the underlying setup processes.***
 
 ### As the user root
 
@@ -295,7 +295,8 @@ The /etc/hosts file should look like this:
     192.168.50.13   pgha4 etcd4
     192.168.50.14   pgha5 etcd5
 
-### Some additional mods needed
+## setup logging folders and permissions.
+***This is optional as it has already been configured as part of the rocky9-pg17-bundle Docker image. It is included here solely to provide you with a complete understanding of the underlying setup processes.***
 
 On each of the nodes, run the following commands
 
@@ -303,237 +304,140 @@ On each of the nodes, run the following commands
     chown -R postgres:postgres /pgha
     mkdir -p /var/log/etcd
     chmod 700 /var/log/etcd
+    mkdir -p /var/log/patroni
+    chmod 700 /var/log/patroni
     chown postgres:postgres /var/log/etcd
+    chown postgres:postgres /var/log/patroni
 
-### Create etcd config files
+## Create etcd configuration files
 
 If we were to start etcd using systemctl our etcd config file would be a simple text file with the necessary parameters and values. However, since this tutorial is using docker and we do not have systemd the etcd config file needs to be a yaml file.
 
-Included in the repo, is a file called **etcdSetup.sh** which you can use to generate the config files for our deployment. Otherwise you would have to create a slightly different one for each node.
+Included in the repo, is a file called **etcdSetup.sh** which you can use to generate the config files for our deployment. Otherwise you would have to tediously create a custom version for each node in the cluster.
 
-The best way to do this is to cut and paste the file shown below into **/tmp/etcdSetup.sh** on the host etcd1 / pgha1
+This script is included in the **rocky9-pg17-bundle Docker image** and located in **/** directory. 
 
-    #!/bin/bash
-    
-    yaml=0
-    confFile="/pgha/config/etcd.conf"
-    
-    if [[ "$#" -ge 1 && "$1" == "-y" ]]; then
-            yaml=1
-            confFile="/pgha/config/etcd.yaml"
-    fi
-    
-    thisNodeIp=$(hostname -i)
-    thisNode=$(hostname)
-    
-    etcdNodeName=$(grep "$thisNode" /etc/hosts | grep -oE '\betcd[0-9]+\b')
-    
-    if [ "$etcdNodeName" == "" ]; then
-            echo "No etcd node name or alias found in /etc/hosts for server $thisNode"
-            exit
-    fi
-    
-    initialCluster=""
-    endPoints="export ENDPOINTS=\""
-    tokenName="pgha-token"
-    etcdDataDir="/pgha/data/etcd"
-    confBaseDir="/pgha/"
-    
-    if [ ! -d "$confBaseDir" ]; then
-        echo -e "ERROR: The directory '$confBaseDir' or it's sub directories do not exist."
-        echo -e "Please create the necessary directory structure needed for this deploy"
-        echo -e
-        echo -e "\tmkdir -p /pgha/{config,certs,data/{etcd,postgres}}"
-        echo -e "\tchown -R postgres:postgres /pgha"
-        echo -e
-        exit
-    fi
-    
-    for i in {1..5}; do
-       node="etcd${i}"
-       nodeIp=$(grep "$node" /etc/hosts | awk '{print $1; exit}')
-       initialCluster=$initialCluster"${node}=http://${nodeIp}:2380,"
-       endPoints=$endPoints"${node}:2380,"
-    done;
-    
-    initialCluster="${initialCluster%,}"   # -- Remove last comma
-    endPoints="${endPoints%,}""\""   # -- Remove last comma and close the double quotes
-    
-    if [ $yaml -eq 0 ]; then
-    
-    cat << EOF > $confFile
-    
-    ETCD_NAME=$etcdNodeName
-    ETCD_INITIAL_CLUSTER="$initialCluster"
-    ETCD_INITIAL_CLUSTER_TOKEN="$tokenName"
-    ETCD_INITIAL_CLUSTER_STATE="new"
-    ETCD_INITIAL_ADVERTISE_PEER_URLS="http://${thisNodeIp}:2380"
-    ETCD_DATA_DIR="${etcdDataDir}"
-    ETCD_LISTEN_PEER_URLS="http://${thisNodeIp}:2380"
-    ETCD_LISTEN_CLIENT_URLS="http://${thisNodeIp}:2379,http://localhost:2379"
-    ETCD_ADVERTISE_CLIENT_URLS="http://${thisNodeIp}:2379"
-    
-    EOF
-    
-    fi
-    
-    if [ $yaml -eq 1 ]; then
-    
-    cat << EOF > $confFile
-    
-    name: $etcdNodeName
-    
-    initial-cluster: "$initialCluster"
-    
-    initial-cluster-token: $tokenName
-    
-    data-dir: ${etcdDataDir}
-    
-    initial-cluster-state: new
-    
-    initial-advertise-peer-urls: "http://${thisNodeIp}:2380"
-    
-    listen-peer-urls: "http://${thisNodeIp}:2380"
-    
-    listen-client-urls: "http://${thisNodeIp}:2379,http://localhost:2379"
-    
-    advertise-client-urls: "http://${thisNodeIp}:2379"
-    
-    EOF
-    
-    
-    fi
-    
-    
-    chown postgres:postgres $confFile
-    
-    cat $confFile
-    
-    echo
-    echo -e "Add the following environment variable to your profile for easy access to the etcd endpoints"
-    echo -e
-    echo -e "\t$endPoints"
-    echo -e
+At this point you are logged into the container as user root.  There is an environment variable called **NODELIST** which is contains the names and IP addresses of all the containers we just created with the **genDeploy** script.   
 
+Since most of the services we will be running are going to be under the account of the user postgres, we need to perform following actions as user postgres.  We also **need access to the NODELIST environment variable**.   In order to preserve the environment variable when we **su** to user postgres, we will sudo to postgres using the following command instead.
 
+    sudo -E -u postgres /bin/bash -l
 
-After you create the file on pgha1 / etcd1 change ownership and privileges 
+The above sudo command will preserve the environment variables form the previous shell, and load the postgres specific settings as well.
 
-    chmod 777 /tmp/etcdSetup.sh
-    chown postgres:postgres /tmp/etcdSetup.sh
+We can now create the etcd.yaml file using the **etcdSetup** script with the **-y** option
 
-The reason we are doing this is because the user postgres has already been configured with the necessary ssh keys as part of the docker image you are using.  Therefore, we can easily copy files and run ssh commands between servers as user postgres. It just makes life a little easier :)
+    /etcdSetup.sh -y
 
-Now lets get things done as the user postgres from the node pgha1 / etcd1
+This will output something similar to the following
 
-Create the etcd.yaml file we will be using by running the etcdSetup script with the -y option
-
-    ./etcdSetup.sh -y
-
-This will generate the file /pgha/config/etcd.yaml withthe following content.
-
-    name: etcd1
-    
-    initial-cluster: "etcd1=http://192.168.50.10:2380,etcd2=http://192.168.50.11:2380,etcd3=http://192.168.50.12:2380,etcd4=http://192.168.50.13:2380,etcd5=http://192.168.50.14:2380"
-    
+    name: pgha1
+    initial-cluster: "pgha1=http://192.168.50.10:2380,pgha2=http://192.168.50.11:2380,pgha3=http://192.168.50.12:2380,pgha4=http://192.168.50.13:2380,pgha5=http://192.168.50.14:2380"
     initial-cluster-token: pgha-token
-    
     data-dir: /pgha/data/etcd
-    
     initial-cluster-state: new
-    
     initial-advertise-peer-urls: "http://192.168.50.10:2380"
-    
     listen-peer-urls: "http://192.168.50.10:2380"
-    
     listen-client-urls: "http://192.168.50.10:2379,http://localhost:2379"
-    
     advertise-client-urls: "http://192.168.50.10:2379"
+    
+    
+    Add the following environment variable to your profile for easy access to the etcd endpoints
+    
+            export ENDPOINTS="pgha1:2380,pgha2:2380,pgha3:2380,pgha4:2380,pgha5:2380"
 
-Copy the etcdSetup.sh file to the other nodes. 
+**Take note of the export command at the end. Copy and run it now or add it to the  profile .pgsql_profile file.**
 
-    su - postgres
-    cd /tmp
-    scp etcdSetup.sh etcd2:/tmp
-    scp etcdSetup.sh etcd3:/tmp
-    scp etcdSetup.sh etcd4:/tmp
-    scp etcdSetup.sh etcd5:/tmp
+The output above also shows the content of the **/pgha/config/etcd.yaml**  generated.
 
-Generate the etcd.yaml file on the remaining nodes
+**Take note of the above etcd.yaml file. If you do not use the script, you would have to create the above file on each of the nodes in the cluster and make the changes to reflect the proper hostname and ip address of the node. This is why using the file makes deployment easier**
 
-    ssh etcd2 "/tmp/etcdSetup.sh -y"
-    ssh etcd3 "/tmp/etcdSetup.sh -y"
-    ssh etcd4 "/tmp/etcdSetup.sh -y"
-    ssh etcd5 "/tmp/etcdSetup.sh -y"
+## Create the etcd configuration file on remaining nodes in cluster
+
+Since we have ssh enabled and configured for the user postgres on all the containers, we can easily perform the above action on the additional servers using ssh. However, prior to running the ssh commands below,  we need to determine what the NODELIST environment variable is set to so we can pass it in our ssh command to the other nodes.
+
+    echo $NODELIST
+    pgha1:192.168.50.10 pgha2:192.168.50.11 pgha3:192.168.50.12 pgha4:192.168.50.13 pgha5:192.168.50.14
+
+As you can see, it's just a list of servers and ip addresses.  We will copy the node list above and export it as part of our ssh command as you can see below.
+
+
+    ssh pgha2 "export NODELIST='pgha1:192.168.50.10 pgha2:192.168.50.11 pgha3:192.168.50.12 pgha4:192.168.50.13 pgha5:192.168.50.14'; /etcdSetup.sh -y"
+    ssh pgha3 "export NODELIST='pgha1:192.168.50.10 pgha2:192.168.50.11 pgha3:192.168.50.12 pgha4:192.168.50.13 pgha5:192.168.50.14'; /etcdSetup.sh -y"
+    ssh pgha4 "export NODELIST='pgha1:192.168.50.10 pgha2:192.168.50.11 pgha3:192.168.50.12 pgha4:192.168.50.13 pgha5:192.168.50.14'; /etcdSetup.sh -y"
+    ssh pgha5 "export NODELIST='pgha1:192.168.50.10 pgha2:192.168.50.11 pgha3:192.168.50.12 pgha4:192.168.50.13 pgha5:192.168.50.14'; /etcdSetup.sh -y"
+
 
 Run a quick validation on any of the other nodes
 
-    ssh etcd5 "cat /pgha/config/etcd.yaml"
+    ssh pgha5 "cat /pgha/config/etcd.yaml"
 
-Should show you the config file for etcd5 
+Should show you the config file for pgha5
 
-    name: etcd5
-    
-    initial-cluster: "etcd1=http://192.168.50.10:2380,etcd2=http://192.168.50.11:2380,etcd3=http://192.168.50.12:2380,etcd4=http://192.168.50.13:2380,etcd5=http://192.168.50.14:2380"
-    
+    name: pgha5
+    initial-cluster: "pgha1=http://192.168.50.10:2380,pgha2=http://192.168.50.11:2380,pgha3=http://192.168.50.12:2380,pgha4=http://192.168.50.13:2380,pgha5=http://192.168.50.14:2380"
     initial-cluster-token: pgha-token
-    
     data-dir: /pgha/data/etcd
-    
     initial-cluster-state: new
-    
     initial-advertise-peer-urls: "http://192.168.50.14:2380"
-    
     listen-peer-urls: "http://192.168.50.14:2380"
-    
     listen-client-urls: "http://192.168.50.14:2379,http://localhost:2379"
-    
     advertise-client-urls: "http://192.168.50.14:2379"
 
-At this point we are ready to start etcd
+As you can see, it is configured correctly with the proper node name and ip addresses.
 
-As user postgres
 
-On the etcd1 server run 
+## Start etcd
+
+At this point we are ready to start etcd. Since we are not using systemctl, we will be starting it as a background job. Also, since in our tutorial, we use custom configurations, will need to specify the config file to use.
+
+On pgha1 run the following command.
 
     nohup etcd --config-file /pgha/config/etcd.yaml > /var/log/etcd/etcd-standalone.log 2>&1 &
 
-Afterwards, start the service on the remaining nodes.
+You can monitor the etcd log file **/var/log/etcd/etcd-standalone.log** for messages
 
-    ssh etcd2  "nohup etcd --config-file /pgha/config/etcd.yaml > /var/log/etcd/etcd-standalone.log 2>&1 &"
-    ssh etcd3  "nohup etcd --config-file /pgha/config/etcd.yaml > /var/log/etcd/etcd-standalone.log 2>&1 &"
-    ssh etcd4  "nohup etcd --config-file /pgha/config/etcd.yaml > /var/log/etcd/etcd-standalone.log 2>&1 &"
-    ssh etcd5  "nohup etcd --config-file /pgha/config/etcd.yaml > /var/log/etcd/etcd-standalone.log 2>&1 &"
+## Start etcd on the remaining nodes.
 
-Finally, we should be able to see the members up and running.  
+    ssh pgha2" nohup etcd --config-file /pgha/config/etcd.yaml > /var/log/etcd/etcd-standalone.log 2>&1 &"
+    ssh pgha3" nohup etcd --config-file /pgha/config/etcd.yaml > /var/log/etcd/etcd-standalone.log 2>&1 &"
+    ssh pgha4" nohup etcd --config-file /pgha/config/etcd.yaml > /var/log/etcd/etcd-standalone.log 2>&1 &"
+    ssh pgha5" nohup etcd --config-file /pgha/config/etcd.yaml > /var/log/etcd/etcd-standalone.log 2>&1 &"
+
+## View the etcd member list
 
     etcdctl  member list
 
 The output should be similar to the following:
 
-    29111f285fc78706, started, etcd4, http://192.168.50.13:2380, http://192.168.50.13:2379, false
-    4ec2b2668990565b, started, etcd2, http://192.168.50.11:2380, http://192.168.50.11:2379, false
-    ab6c7f1736bd6eb0, started, etcd5, http://192.168.50.14:2380, http://192.168.50.14:2379, false
-    c96171b99f7cfa68, started, etcd1, http://192.168.50.10:2380, http://192.168.50.10:2379, false
-    cebc84bd6d4d9d4b, started, etcd3, http://192.168.50.12:2380, http://192.168.50.12:2379, false
+    29111f285fc78706, started, pgha4, http://192.168.50.13:2380, http://192.168.50.13:2379, false
+    4ec2b2668990565b, started, pgha2, http://192.168.50.11:2380, http://192.168.50.11:2379, false
+    ab6c7f1736bd6eb0, started, pgha5, http://192.168.50.14:2380, http://192.168.50.14:2379, false
+    c96171b99f7cfa68, started, pgha1, http://192.168.50.10:2380, http://192.168.50.10:2379, false
+    cebc84bd6d4d9d4b, started, pgha3, http://192.168.50.12:2380, http://192.168.50.12:2379, false
 
 
-We can also check the status.  You need your endpoints defined. The following export command should be generated for you when you ran the `etcdSetup.sh`.  You can add it to your .profile or just export it in your session.
+## Check etcd status
 
-     export ENDPOINTS="etcd1:2380,etcd2:2380,etcd3:2380,etcd4:2380,etcd5:2380"
+We can also check the status of etcd using the ENDPOINTS environment variable we exported earlier.  
 
+Remember, when you ran etcdSetup.sh, it should have been generated an output with the needed export command.
+
+     export ENDPOINTS="pgha1:2380,pgha2:2380,pgha3:2380,pgha4:2380,pgha5:2380"
+     
 Check the etcd status
 
-     etcdctl --write-out=table --endpoints=$ENDPOINTS endpoint status
+    etcdctl --write-out=table --endpoints=$ENDPOINTS endpoint status
     +------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
     |  ENDPOINT  |        ID        | VERSION | DB SIZE | IS LEADER | IS LEARNER | RAFT TERM | RAFT INDEX | RAFT APPLIED INDEX | ERRORS |
     +------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
-    | etcd1:2380 | c96171b99f7cfa68 |  3.5.17 |   20 kB |     false |      false |         2 |         13 |                 13 |        |
-    | etcd2:2380 | 4ec2b2668990565b |  3.5.17 |   20 kB |     false |      false |         2 |         13 |                 13 |        |
-    | etcd3:2380 | cebc84bd6d4d9d4b |  3.5.17 |   20 kB |      true |      false |         2 |         13 |                 13 |        |
-    | etcd4:2380 | 29111f285fc78706 |  3.5.17 |   20 kB |     false |      false |         2 |         13 |                 13 |        |
-    | etcd5:2380 | ab6c7f1736bd6eb0 |  3.5.17 |   20 kB |     false |      false |         2 |         13 |                 13 |        |
+    | pgha1:2380 | c96171b99f7cfa68 |  3.5.17 |   20 kB |     false |      false |         2 |         13 |                 13 |        |
+    | pgha2:2380 | 4ec2b2668990565b |  3.5.17 |   20 kB |      true |      false |         2 |         13 |                 13 |        |
+    | pgha3:2380 | cebc84bd6d4d9d4b |  3.5.17 |   20 kB |     false |      false |         2 |         13 |                 13 |        |
+    | pgha4:2380 | 29111f285fc78706 |  3.5.17 |   20 kB |     false |      false |         2 |         13 |                 13 |        |
+    | pgha5:2380 | ab6c7f1736bd6eb0 |  3.5.17 |   20 kB |     false |      false |         2 |         13 |                 13 |        |
     +------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
+       
 
 ## Patroni
 
