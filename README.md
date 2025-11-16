@@ -1,6 +1,5 @@
 # Postgres High Availability with Patroni Training
 
-
 Welcome to this free, self paced training documentation offered by Postgres Solutions! This comprehensive material is designed to guide you through the critical concepts and practical implementation of running a highly available database cluster using Postgres, orchestrated by Patroni, and leveraging etcd for distributed consensus.
 
 We aim to break down complex topics, clarify common pitfalls (like quorum sizing), and provide step by step instructions to build a resilient system.
@@ -96,7 +95,7 @@ Lets break it down.
 ## Setting up your docker environment
 
 
-To begin the practical setup for Postgres cluster, we will utilize Docker. All the necessary Dockerfiles and resources for this tutorial are available in the public repository: https://github.com/jtorral/rocky9-pg17-bundle.
+To begin the setup for the Postgres cluster, we will utilize Docker. All the necessary Dockerfiles and resources for this tutorial are available in the repository: https://github.com/jtorral/rocky9-pg17-bundle.
 
 This repository contains the setup needed to run a complete, feature rich Rocky Linux 9-based environment that includes Postgres 17 and Patroni.
 

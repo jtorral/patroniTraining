@@ -38,7 +38,6 @@ exit 1
 
 useYaml=0
 confFile="/pgha/config/etcd.conf"
-#confFile="/tmp/etcd.conf"
 
 useEtcd=0
 
@@ -54,7 +53,6 @@ shift $(($OPTIND - 1))
 if [ $useYaml -eq 1 ]; then
         yaml=1
         confFile="/pgha/config/etcd.yaml"
-        #confFile="/tmp/etcd.yaml"
 fi
 
 # ---------------------
@@ -70,9 +68,16 @@ tokenName="pgha-token"
 etcdDataDir="/pgha/data/etcd"
 confBaseDir="/pgha/"
 patroniVarFile="/pgha/config/patroniVars"
-#patroniVarFile="/tmp/patroniVars"
 patroniConf="/pgha/config/patroni.yaml"
-#patroniConf="/tmp/patroni.yaml"
+pgprofile="/var/lib/pgsql/.pgsql_profile"
+
+
+# ---------------------------------------------------------------------------------------
+# Source the postgres profile so we can use the settings when calling this script via ssh
+# otherwise, the simple ssh wont know env variables for use postgres
+# ---------------------------------------------------------------------------------------
+
+source $pgprofile
 
 if [ ! -d "$confBaseDir" ]; then
     echo -e
