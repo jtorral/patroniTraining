@@ -18,6 +18,13 @@ namespace: ${NAMESPACE}
 scope: ${SCOPE}
 name: ${NODE_NAME}
 
+log:
+  dir: /var/log/patroni
+  filename: patroni.log
+  level: INFO
+  file_size: 26214400
+  file_num: 4
+
 restapi:
     listen: 0.0.0.0:8008
     connect_address: ${NODE_NAME}:8008

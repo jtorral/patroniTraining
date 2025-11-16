@@ -46,6 +46,43 @@ exit
 }
 
 
+function buildEnvNodeList() {
+
+   # ---------------------------------------------------------------------------------------------
+   # Lets define this variables as local so we dont screw up the function variables named the same
+   # from outside the function
+   # ---------------------------------------------------------------------------------------------
+
+   nodeEnvList=""
+   local i
+   local nextIp
+   local nodeIp
+   local tempNodeName=$nodeName
+
+   for (( i=1; i<=$numNodes; i++ )); do
+      if [ $networkExists -eq 0 ]; then
+         # ---------------------------------------------------------------------------------------------
+         # Lets start with an IP of 11 for new containers when creating a new network
+         # 1 is reserved for the gateway.
+         # Note: Our for loop starts with 1, so instead of incrementing the nextIp by 10, we do it by 9.
+         # ---------------------------------------------------------------------------------------------
+         nextIp=$(( i + 9 ))
+      else
+         # ---------------------------------------------------------------------------------
+         # If using an existing network, we get the last ip on that network and increment it
+         # ---------------------------------------------------------------------------------
+         nextIp=$(( i + lastIp ))
+      fi
+   
+      nodeName="${tempNodeName}${i}"
+      nodeIp="${sub}.${nextIp}"
+      nodeEnvList="${nodeEnvList}${nodeName}:${nodeIp} "
+
+   done
+
+}
+
+
 function createNetwork() {
 echo -e "\tdocker network create \
 --driver bridge \
@@ -59,6 +96,7 @@ function createGenericNode() {
 echo -e "\tdocker run \
 -p $pgPortMap:5432 \
 --hostname=$nodeName \
+--env=NODELIST=\"$nodeEnvList\" \
 --network=$networkName \
 --name=$nodeName \
 --ip $nodeIp \
@@ -71,6 +109,7 @@ echo -e "\tdocker run \
 -p $pgPortMap:5432 \
 -p $poolPortMap:9999 \
 --env=PGPASSWORD=$pgPassword \
+--env=NODELIST=\"$nodeEnvList\" \
 -v ${nodeName}-pgdata:/pgdata \
 --hostname=$nodeName \
 --network=$networkName \
@@ -386,6 +425,11 @@ tempNodeName=$nodeName
 
 echo -e "function runContainers() {" >> $dockerRunFile
 echo -e "\trunNetwork" >> $dockerRunFile
+
+# -----------------------------------------------------------------------------------------------------------
+# build the list of nodes and ip addresses so we can use as an env variable inside comtainers for other tasks
+# -----------------------------------------------------------------------------------------------------------
+buildEnvNodeList
 
 for (( i=1; i<=$numNodes; i++ )); do
    if [ $networkExists -eq 0 ]; then

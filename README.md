@@ -1,14 +1,34 @@
+# Postgres High Availability with Patroni Training
 
 
-# Postgres High Availability with Patroni.  
+Welcome to this free, self paced training documentation offered by Postgres Solutions! This comprehensive material is designed to guide you through the critical concepts and practical implementation of running a highly available database cluster using Postgres, orchestrated by Patroni, and leveraging etcd for distributed consensus.
+
+We aim to break down complex topics, clarify common pitfalls (like quorum sizing), and provide step by step instructions to build a resilient system.
+
+## License and Credit
+
+This documentation is provided for personal, self paced training. If you plan to utilize this documentation outside of self training, for instance, as a base for creating additional training materials, tutorials, or public documentation you **must** give credit to postgressolutions.com and Jorge Torralba. Your cooperation helps support the creation of future educational content.
+
+## Support Our Work
+
+If you find significant value in this free training and feel that it has enhanced your understanding of high availability Postgres, please consider making a donation. Your support goes a long way toward producing and maintaining additional high quality, free training materials. You can donate here:
+
+https://www.paypal.com/donate/?hosted_button_id=J2HWPPWX8EBNC
 
 
-If you're reading this, you are likely already familiar with Patroni. This powerful tool elegantly solves the problem of high availability for Postgres by orchestrating replication, failover, and self healing. Patroni's primary function is to turn a collection of standard Postgres instances into a robust, resilient cluster.
+## About this tutorial
 
-This tutorial is designed not only to guide you through setting up a highly available Postgres cluster with Patroni, but also to equip you with the fundamental concepts needed to avoid the critical pitfalls that plague many production deployments. To focus purely on the architecture and consensus mechanics without complex installation steps, we will be leveraging Docker containers. These containers conveniently include Postgres, Patroni, and etcd with many necessary dependencies pre-configured. We will carefully walk through the configuration and setup process, ensuring you gain a complete and clear understanding of how these components interact and how to properly secure your critical quorum for true high availability.
+If you're reading this or expressing an interest in this topic, you are likely already familiar with Patroni. This powerful tool elegantly solves the problem of high availability for Postgres by orchestrating replication, failover, and self healing. Patroni's primary function is to turn a collection of standard Postgres instances into a robust, resilient cluster.
 
+This tutorial is designed not only to guide you through setting up a highly available Postgres cluster with Patroni, but also to equip you with the fundamental concepts needed to avoid the critical pitfalls that plague many production deployments. 
 
-## A Critical Misconception. Your etcd Quorum
+To focus purely on the architecture and consensus mechanics without complex installation steps, we will be leveraging Docker containers. These containers conveniently include Postgres, Patroni, and etcd with many necessary dependencies pre-configured. We will carefully walk through the configuration and setup process, ensuring you gain a complete and clear understanding of how these components interact and how to properly secure your critical quorum for true high availability.
+
+# Lets get this out of the way first!
+
+## The etcd Mystery and Critical Misconception. Your etcd Quorum
+
+### Don't skip this section. Even if you think you already know about quorums.
 
 There is a fundamental part of the Patroni architecture that is often **grossly** **overlooked** or **misunderstood**, the role and sizing of the Distributed Consensus Store. In the context of Patroni, this is typically etcd.
 
@@ -70,31 +90,144 @@ Lets break it down.
 - Lastly,  5 nodes needed minus the original 3 nodes, means **you need an extra 2 etcd nodes**. The original 3 on each database server, plus two additional stand alone etcd nodes.
 
 
-With the above explained, our tutorial and examples used in this documentation will be based on 3 postgres servers running etcd and 2 additional etcd servers to make up the needed difference.
-
-## Containerized Service Management
-
-Since we are deploying etcd within Docker containers, we won't be using host level service managers like systemctl to start, stop, or manage the processes. The lifecycle of the etcd process will be entirely managed by the Docker runtime itself and you starting and stopping it as needed.
+***With that said, our tutorial and examples used throughout this documentation will be based on 3 postgres servers running etcd and 2 additional etcd servers to make up the needed difference.*** 
 
 
-**Clone the following repo**
+## Setting up your docker environment
 
-https://github.com/jtorral/rocky9-pg17-bundle
 
-Which includes all the necessary files, scripts and packages.  It is based on Rocky 9 ( redhat ) and Postgres 17.
+To begin the practical setup for Postgres cluster, we will utilize Docker. All the necessary Dockerfiles and resources for this tutorial are available in the public repository: https://github.com/jtorral/rocky9-pg17-bundle.
 
-You will need to create the docker image from the repo in order to continue with this self guided tutorial.
+This repository contains the setup needed to run a complete, feature rich Rocky Linux 9-based environment that includes Postgres 17 and Patroni.
+
+**Creating the Docker image**
+
+You will need to clone the repository and build the base Docker image from the provided files. The image name you will create is rocky9-pg17-bundle.
+
+**Clone the Repository**
+
+    git clone git@github.com:jtorral/rocky9-pg17-bundle.git
+    
+    cd rocky9-pg17-bundle
+
+**Build the Image:**
 
     docker build -t rocky9-pg17-bundle .
 
+**Image notes**
 
-After you create the docker image, use the included genDeploy script to create the necessary fi;es and docker management scripts.
+It's important to note that the resulting rocky9-pg17-bundle image is not a lightweight image. While modern container practices often favor minimal base images, this particular image is feature packed.
+
+It includes the Rocky 9 operating system as its base and contains additional packages and tools necessary for complex database administration tasks, debugging, and advanced Patroni features (like pgBackRest integration, though we won't fully configure it yet). This robust foundation ensures that all necessary utilities for managing Patroni and Postgres are readily available throughout the training, simplifying the environment setup and allowing us to focus on the cluster's high-availability logic.
+
+
+## Simplifying Deployment with genDeploy
+
+To make the environment setup smoother, the cloned repository includes a helper script called genDeploy
+
+This script is designed to streamline the creation of all the necessary docker run commands for your etcd and Patroni nodes. Instead of manually writing and managing complex command line arguments for each of the containers and , you simply pass a few key parameters to genDeploy.
+
+When executed, genDeploy does not immediately run the containers. Instead, it generates a new file based on container name you declare ( e.g., DockerRunThis.pgha ) which contains all the configured docker run commands. This generated file gives you a convenient way to manage your entire deployed environment, acting similar to a custom, albeit less advanced, version of a docker-compose file.
+
+Note: Using genDeploy is not required for this tutorial. You could manually construct all the docker run commands yourself. However, using the script is highly recommended as it eliminates potential configuration errors and makes stopping, starting, and cleaning up your deployment significantly easier.
+
+## Service Management and Configuration Formats
+
+As we are running our services within Docker containers, we will indeed bypass system level service managers like systemctl. Instead, we will be manually starting and stopping the services (Patroni and etcd) as needed within our environment.
+
+### The etcd Configuration File Format Pitfall
+
+A major point of confusion for users deploying etcd is the variability of its configuration file format, which depends entirely on how the service is launched.
+
+- **Plain Text/Shell Format (Default)** When etcd is launched via a standard script or systemd unit file (like the ones typically managed by systemctl), its configuration often consists of plain text where flags are defined directly.
+
+- **YAML Format (Required for --config-file)** If you launch the etcd executable and explicitly use the --config-file flag to specify a configuration file location, that file must be in YAML format.
+
+**Simplified Setup with etcdSetup**
+
+To help you navigate this inconsistency, the repository includes the helper script etcdSetup. This script will generate the necessary configuration files for your etcd nodes. Again, like the other script files, this is not a requirement but it makes the configuration less prone to typos and significantly easier.
+
+Crucially, the script supports an optional parameter
+
+If you execute the script without the YAML flag, it generates the configuration suitable for starting and stopping etcd with systemctl.
+
+If you pass the **-y** flag (e.g., **etcdSetup -y**), it will generate the YAML version of the configuration file, ready to be used with the **--config-file** flag which is the method used for this tutorial.
+
+This ensures you have the correct file format, regardless of how you choose to run etcd in the future.
+
+
+## Getting started
+
+
+After completing the above steps of cloning the repo and creating the Docker image,  we will now use the genDeploy script to create our Docker environemnt.
+
+For reference only, here are the options for running genDeploy.
+
+    Usage: genDeploy options
+    
+    Description:
+    
+    A for generating docker run files used by images created from the repo this was pulled from.
+    The generated run file can be used to manage your deploy. Similar to what you can do with a docker-compose file.
+    
+    When used with a -g option. It can be used for any generic version of postgres images. It will only create run commands with network, ip and nodenames.
+    Good if you just want to deploy multiple containers of your own.
+    
+    Options:
+      -m                    Setup postgres environment to use md5 password_encription."
+      -p <password>         Password for user postgres. If usinmg special characters like #! etc .. escape them with a \ default = \"postgres\""
+      -n <number>           number of of containers to create. Default is 1. "
+      -r                    Start postgres in containers automatically. Otherwise you have to manually start postgres.
+      -g                    Use as a generic run-command generator for images not part of this repo.
+    
+    Required Options:
+      -c <name>             The name container/node names to use. This should be a prefix. For example if you want 3 postgres containers"
+                            pg1, pg2 and pg3. Simply provide \"pg\" since this script will know how to name them."
+      -w <network>          The name of the network to bind the containers to. You can provide an existing network name or a new one to create."
+      -s <subnet>           If creating a new network, provide the first 3 octets for the subnet to use with the new network. For example: 192.168.50"
+      -i <image>            docker image to use. If you created your own image tage, set it here."
+
+Now that you see what flags are for genDeploy,  lets run it for our environment keeping in mind we will be needing 5 containers in total as noted above in the explanation of etcd quorum and the section labeled **Don't skip this section**.
+
+### Create your deployment files
 
     ./genDeploy -m -n 5 -c pgha -w pghanet -s 192.168.50 -i rocky9-pg17-bundle
 
     The following docker deploy utility manager file: DockerRunThis.pgha has been created. To manage your new deploy run the file "./DockerRunThis.pgha"
 
-Now create the containers
+**A breakdown of the command and flags,**
+
+- **-m** sets up Postgres to use password_encryption of md5
+- **-n 5** creates a total of 5 containers
+- **-c pgha** the name each container will be given with a unique identifier behind it. ( ie. pgha1, pgha2 )
+**- w pghanet** will create a dedicated docker network called pghanet for our containers to run under
+- **-s 192.168.50** will assign that subnet to the custom network pghanet
+- **-i rocky-pg17-bundle** is the image to use for creating the container
+
+Lastly, it will have generated the file **DockerRunThis.pgha** which is how we will manage our deploy.
+
+
+## Important Note on IP Address Management with genDeploy
+
+It's critical to understand how the genDeploy script manages network addresses to prevent conflicts in your Docker environment.
+
+The genDeploy script attempts to create a unique and stable deployment by performing a basic check.  It looks at the currently running Docker containers to identify IP addresses and ports that are actively in use. Based on this information, it then generates unique IP addresses and port numbers for the new containers it intends to define.
+
+### The Risk of Conflicts
+
+This approach works best when your environment is clean, or when all containers are running. If some of your old containers or test deployments are currently stopped (not running):
+
+genDeploy may not detect the IP addresses those stopped containers reserved when they were last run.
+
+It may then generate a new deployment file that uses an IP address that is technically reserved by a stopped container.
+
+When you attempt to start an old container that has a conflicting IP address with one of your new genDeploy nodes, you will encounter a network error.
+
+If this conflict occurs, you will have to manually resolve it by either deleting the conflicting old container or editing the IP addresses in the genDeploy generated script.  **Editing the genDeploy generated script file with different IP's will be the easiest and most straight forward solution.**
+
+For a hassle-free experience, ensure all old, unused containers are completely removed before running genDeploy.
+
+### Create the containers
 
     ./DockerRunThis.pgha create
     cb7f102af4e3d54edd19764f1e79f3948f5c5fb547f60e925f94033b13dce959
@@ -104,7 +237,7 @@ Now create the containers
     2d02ce33a6e8c86f255b43bfe6890a6dc7c56a5ce1d81dc82d58efacd57ed96a
     6ac8bb0f29430d88a2630702b3d9e567f9ede1d45466c34f84ab6e91c2938cef
 
-Now start them
+### Start the containers
 
      ./DockerRunThis.pgha start
     Starting containers  pgha1 pgha2 pgha3 pgha4 pgha5
@@ -114,14 +247,26 @@ Now start them
     pgha4
     pgha5
 
-At this point we have named all of our containers with the prefix pgha. Since all the containers are on the same docker network we created ( pghanet ) they can all be resolved within the embedded dns server.
 
-Docker automatically injects a DNS server into each custom network. This DNS server is accessible to all containers connected to that specific network. Therefore, no changes are really needed to the /etc/hosts file.
+### Naming convention
 
-## Prework needed
+At this point, we've established a naming convention for our containers using the prefix pgha (e.g., pgha1, pgha2, etc.).
+
+Since all of these containers are placed onto the same dedicated Docker network we created (which we will refer to as **pghanet** ), they benefit from Docker's embedded DNS server. This means that every container can resolve every other container using its unique container name (e.g., pgha1 can reach pgha5 simply by using the name pgha5).
+
+### Hostname Options
+
+You have flexibility in how you refer to your nodes within configuration files.
+
+- **Use Existing Container Names** You can directly use the hostnames generated when you created the containers (e.g., pgha1 through pgha5) in your Patroni and etcd configurations. Since they are all on the pghanet network, these names will resolve correctly without any additional changes.
+
+- **Create Aliases for Clarity** To make your configuration files slightly more intuitive and easier to follow, you can create aliases. For example, you can map the Patroni nodes to etcd1 through etcd5 within the /etc/hosts file of the relevant containers. This practice can make the cluster topology more obvious when reading configuration files or logs.
 
 
-We can use the existing host names we generated when we create the containers  pgha1 ... pgha5 without any additional changes or we can make things a little more obvious by creating aliases like etcd1 ... etcd5.
+
+
+## Create the aliases
+
 
 ### As the user root
 
@@ -389,4 +534,7 @@ Check the etcd status
     | etcd4:2380 | 29111f285fc78706 |  3.5.17 |   20 kB |     false |      false |         2 |         13 |                 13 |        |
     | etcd5:2380 | ab6c7f1736bd6eb0 |  3.5.17 |   20 kB |     false |      false |         2 |         13 |                 13 |        |
     +------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
+
+## Patroni
+
 
