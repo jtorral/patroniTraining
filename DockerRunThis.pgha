@@ -1,0 +1,145 @@
+#!/bin/bash
+
+function runNetwork() {
+	docker network create --driver bridge --subnet 192.168.50.0/24 --gateway 192.168.50.1 pghanet 
+}
+
+function runContainers() {
+	runNetwork
+	docker run -p 6432:5432 -p 9992:9999 --env=PGPASSWORD=postgres -v pgha1-pgdata:/pgdata --hostname=pgha1 --network=pghanet --name=pgha1 --privileged --ip 192.168.50.10 --env=MD5=1  -dt rocky9-pg17-bundle 
+	docker run -p 6433:5432 -p 9993:9999 --env=PGPASSWORD=postgres -v pgha2-pgdata:/pgdata --hostname=pgha2 --network=pghanet --name=pgha2 --privileged --ip 192.168.50.11 --env=MD5=1  -dt rocky9-pg17-bundle 
+	docker run -p 6434:5432 -p 9994:9999 --env=PGPASSWORD=postgres -v pgha3-pgdata:/pgdata --hostname=pgha3 --network=pghanet --name=pgha3 --privileged --ip 192.168.50.12 --env=MD5=1  -dt rocky9-pg17-bundle 
+	docker run -p 6435:5432 -p 9995:9999 --env=PGPASSWORD=postgres -v pgha4-pgdata:/pgdata --hostname=pgha4 --network=pghanet --name=pgha4 --privileged --ip 192.168.50.13 --env=MD5=1  -dt rocky9-pg17-bundle 
+	docker run -p 6436:5432 -p 9996:9999 --env=PGPASSWORD=postgres -v pgha5-pgdata:/pgdata --hostname=pgha5 --network=pghanet --name=pgha5 --privileged --ip 192.168.50.14 --env=MD5=1  -dt rocky9-pg17-bundle 
+}
+
+function restartContainers() {
+	echo -e "Restarting containers  pgha1 pgha2 pgha3 pgha4 pgha5"
+	docker restart  pgha1 pgha2 pgha3 pgha4 pgha5
+}
+
+function startContainers() {
+	echo -e "Starting containers  pgha1 pgha2 pgha3 pgha4 pgha5"
+	docker start  pgha1 pgha2 pgha3 pgha4 pgha5
+}
+
+function stopContainers() {
+	echo -e "Stoping containers  pgha1 pgha2 pgha3 pgha4 pgha5"
+	docker stop  pgha1 pgha2 pgha3 pgha4 pgha5
+}
+
+function removeContainers() {
+	echo -e "Removing containers  pgha1 pgha2 pgha3 pgha4 pgha5"
+	docker rm  pgha1 pgha2 pgha3 pgha4 pgha5
+}
+
+function removeNetwork() {
+	if [ 0 -eq 0 ]; then
+		echo -e "Removing network pghanet"
+		docker network rm pghanet
+	else
+		echo -e
+		echo -e "This DockerRunFile: DockerRunThis.pgha was generated using an existing network. Therefore, the network cannot be removed."
+		echo -e "If you are certain no other containers are using this network, you can manually remove it by running the following command:"
+		echo -e "\tdocker network rm pghanet"
+		echo -e "If you do remove the network, regenerate this DockerRunFile again using the following command:"
+		echo -e "\t"./genDeploy -m -n 5 -c pgha -w pghanet -s 192.168.50 -i rocky9-pg17-bundle""
+		echo -e
+		echo -e "Also, feel free to modify this file: DockerRunThis.pgha and adjust as needed"
+		echo -e
+	fi
+}
+
+function removeVolumes() {
+	echo -e "Removing volumes   pgha1-pgdata  pgha2-pgdata  pgha3-pgdata  pgha4-pgdata  pgha5-pgdata"
+	docker volume rm   pgha1-pgdata  pgha2-pgdata  pgha3-pgdata  pgha4-pgdata  pgha5-pgdata
+}
+
+function usage() {
+
+cat << EOF
+
+Usage: DockerRunThis.pgha [-f] {start|stop|create|rm|rmvolumes|down}
+      
+Description:
+      
+Manage your docker deploy generated when you ran build-docker-env
+
+Actions:
+  start         Start the docker containers  pgha1 pgha2 pgha3 pgha4 pgha5
+  restart       Restart the docker containers  pgha1 pgha2 pgha3 pgha4 pgha5
+  stop          Stop the docker containers  pgha1 pgha2 pgha3 pgha4 pgha5
+  create        Run the docker conatiners " pgha1 pgha2 pgha3 pgha4 pgha5" for the first time
+  rm            Remove the docker containers  pgha1 pgha2 pgha3 pgha4 pgha5
+  rmvolumes     Remove the volumes   pgha1-pgdata  pgha2-pgdata  pgha3-pgdata  pgha4-pgdata  pgha5-pgdata
+  down          Delete everything created with this run file
+   
+Options:
+  -f            Force delete of volumes. Otherwise preserved
+   
+EOF
+exit
+}
+
+function deleteEnv() {
+	echo -e "Attempting to delete entire depoloy "
+	stopContainers
+	removeContainers
+	removeNetwork
+	if [ $force -eq 1 ]; then
+		removeVolumes
+	fi
+	if [ $force -eq 0 ]; then
+		echo -e "Preserving volumes. Use -f to for removal or run  rmvolumes"
+	fi
+}
+
+
+force=0
+doThis=""
+
+for arg in "$@"; do
+    case "$arg" in
+        -f)
+            force=1
+            ;;
+        -*)
+            echo "Error: Unknown option $arg" >&2
+            usage
+            ;;
+        start|restart|stop|create|rm|rmvolumes|down)
+            # This block explicitly catches valid actions
+            if [ -z "$doThis" ]; then 
+                doThis="$arg"
+            else
+                echo "Error: Only one action is allowed." >&2
+                usage
+            fi
+            ;; 
+        *)
+            # This catches any other non-option argument (e.g., 'hello')
+            echo "Error: Invalid action or argument: $arg" >&2
+            usage
+            ;; 
+    esac
+done
+
+if [ -z "$doThis" ]; then
+    echo "Error: Must specify an action." >&2
+    usage
+fi
+
+
+case $doThis in
+   "start") startContainers;;  
+   "restart") restartContainers;;  
+   "stop") stopContainers;;
+   "create") runContainers;;
+   "rm") removeContainers;;
+   "rmvolumes") removeVolumes;;
+   "down") deleteEnv;;
+   *) usage;;
+   ?) usage;;   
+esac
+
+
