@@ -97,6 +97,10 @@ Lets break it down.
 
 To begin the setup for the Postgres cluster, we will utilize Docker. All the necessary Dockerfiles and resources for this tutorial are available in the repository: https://github.com/jtorral/rocky9-pg17-bundle.
 
+You can clone the repo from here:
+
+    git clone git@github.com:jtorral/rocky9-pg17-bundle.git
+
 This repository contains the setup needed to run a complete, feature rich Rocky Linux 9-based environment that includes Postgres 17 and Patroni.
 
 **Creating the Docker image**
@@ -728,4 +732,5 @@ Now lets see if it was replicated to pgha2
     (5 rows)
  
  As you can see it has been replicated.
+
 
