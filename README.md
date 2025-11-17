@@ -388,7 +388,7 @@ As you can see, it is configured correctly with the proper node name and ip addr
 
 ## Start etcd
 
-At this point we are ready to start etcd. Since we are not using systemctl, we will be starting it as a background job. Also, since in our tutorial, we use custom configurations, will need to specify the config file to use.
+At this point we are ready to start etcd. Since we are **not using systemctl**, we will be starting it as a background process. Since in this tutorial, we use custom configurations, we will need to specify the config file to use with the --config-file option.  Another reason for the yaml format we used.
 
 On pgha1 run the following command.
 
@@ -398,10 +398,10 @@ You can monitor the etcd log file **/var/log/etcd/etcd-standalone.log** for mess
 
 ## Start etcd on the remaining nodes.
 
-    ssh pgha2" nohup etcd --config-file /pgha/config/etcd.yaml > /var/log/etcd/etcd-standalone.log 2>&1 &"
-    ssh pgha3" nohup etcd --config-file /pgha/config/etcd.yaml > /var/log/etcd/etcd-standalone.log 2>&1 &"
-    ssh pgha4" nohup etcd --config-file /pgha/config/etcd.yaml > /var/log/etcd/etcd-standalone.log 2>&1 &"
-    ssh pgha5" nohup etcd --config-file /pgha/config/etcd.yaml > /var/log/etcd/etcd-standalone.log 2>&1 &"
+    ssh pgha2 "nohup etcd --config-file /pgha/config/etcd.yaml > /var/log/etcd/etcd-standalone.log 2>&1 &"
+    ssh pgha3 "nohup etcd --config-file /pgha/config/etcd.yaml > /var/log/etcd/etcd-standalone.log 2>&1 &"
+    ssh pgha4 "nohup etcd --config-file /pgha/config/etcd.yaml > /var/log/etcd/etcd-standalone.log 2>&1 &"
+    ssh pgha5 "nohup etcd --config-file /pgha/config/etcd.yaml > /var/log/etcd/etcd-standalone.log 2>&1 &"
 
 ## View the etcd member list
 
@@ -438,6 +438,294 @@ Check the etcd status
     +------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
        
 
-## Patroni
+## Patroni setup
 
+
+To simplify the deployment process, the **patroniSetup.sh** script is included in the rocky9-pg17-bundle Docker image. We will be using this script in the tutorial as it is designed to reduce the tedium of manual configuration and make deployments easier.
+
+However, for your learning and complete understanding, we will also explain in detail the underlying configuration and settings contained within the resulting patroni.yml file. This ensures you gain a full conceptual grasp of the environment and can customize it later if needed.
+
+
+### Copy the createRoles.sh script
+
+While still logged in to pgha1, **as user postgres**
+
+     cp -p /createRoles.sh /pgha/config/
+
+As of Patroni version 4, role creation within the patroni configuration file has been removed. You must now run a post bootstrap command to perform any additional role creation on the database cluster. 
+
+The createRoles.sh script contains the necessary roles needed for this tutorial.
+
+### Empty the postgres data directory
+
+Patroni will initialize a fresh cluster and to do this, it will need an empty data directory. 
+
+    echo $PGDATA
+    /pgdata/17/data
+
+Empty the directory.
+
+    rm -rf /pgdata/17/data
+
+When we ran the etcdSetup.sh script it created the file **/pgha/config/patroniVars.** 
+
+    ETCD_NODES="pgha1:2379,pgha2:2379,pgha3:2379,pgha4:2379,pgha5:2379"
+    NODE_NAME="pgha1"
+    PATRONI_CFG="/pgha/config/patroni.yaml"
+    DATADIR="/pgdata/17/data"
+    CFG_DIR="/pgha/config"
+    PG_BIN_DIR="/usr/pgsql-17/bin/"
+    NAMESPACE="pgha"
+    SCOPE="pgha_patroni_cluster"
+
+The file contains values we need to generate the patroni config files dynamically across all nodes.  Otherwise, you would have to manually create each file individually.  The patroniSetup.sh sources /pgha/config/patroniVars to read these settings
+
+### Run the setupPatroni.sh script
+
+At this time we have done all the prework needed to run the script.
+
+    /patroniSetup.sh
+    Configuration loaded successfully from /pgha/config/patroniVars.
+
+
+### Start patroni manually in the background
+
+    nohup patroni /pgha/config/patroni.yaml > patroni.log 2>&1 &
+
+Validate patroni is running using patronictl
+
+    patronictl -c /pgha/config/patroni.yaml list
+    
+    + Cluster: pgha_patroni_cluster (7573485601442316865) -+-----+------------+-----+
+    | Member |  Host |  Role  |  State  | TL | Receive LSN | Lag | Replay LSN | Lag |
+    +--------+-------+--------+---------+----+-------------+-----+------------+-----+
+    | pgha1  | pgha1 | Leader | running |  1 |             |     |            |     |
+    +--------+-------+--------+---------+----+-------------+-----+------------+-----+
+
+You can also check the log file
+
+    cd /var/log/patroni
+    cat patroni.log
+    2025-11-17 00:32:07,075 INFO: Selected new etcd server http://192.168.50.13:2379
+    2025-11-17 00:32:07,084 INFO: No PostgreSQL configuration items changed, nothing to reload.
+    2025-11-17 00:32:07,085 INFO: Systemd integration is not supported
+    2025-11-17 00:32:07,130 INFO: Lock owner: None; I am pgha1
+    2025-11-17 00:32:07,222 INFO: trying to bootstrap a new cluster
+    2025-11-17 00:32:07,897 INFO: postmaster pid=585
+    2025-11-17 00:32:08,928 INFO: establishing a new patroni heartbeat connection to postgres
+    2025-11-17 00:32:09,025 INFO: running post_bootstrap
+    2025-11-17 00:32:09,291 INFO: initialized a new cluster
+    2025-11-17 00:32:19,161 INFO: no action. I am (pgha1), the leader with the lock
+    2025-11-17 00:32:29,201 INFO: no action. I am (pgha1), the leader with the lock
+    2025-11-17 00:32:39,108 INFO: no action. I am (pgha1), the leader with the lock
+    2025-11-17 00:32:49,107 INFO: no action. I am (pgha1), the leader with the lock
+    2025-11-17 00:32:59,108 INFO: no action. I am (pgha1), the leader with the lock
+
+So far so good,
+
+### Start patroni on the remaining nodes 1 at a time.  
+
+Lets once again take advantage of our preconfigured ssh setup with this Docker environment and repeat the above process for the remaining nodes. 
+
+From pgha1, still as user postgres run the following ssh command.
+
+    ssh pgha2 "cp -p /createRoles.sh /pgha/config; rm -rf /pgdata/17/data/; /patroniSetup.sh"
+
+If it worked, you should see the message
+
+    Configuration loaded successfully from /pgha/config/patroniVars.
+
+Now lets start it from ssh as well.
+
+    ssh pgha2 "nohup patroni /pgha/config/patroni.yaml > patroni.log 2>&1 &"
+
+Validate it was added to the patroni cluster.  Again, we use patronictl. We can do this from any of the servers in our cluster.
+
+    patronictl -c /pgha/config/patroni.yaml list
+    
+    + Cluster: pgha_patroni_cluster (7573485601442316865) --+-----+------------+-----+
+    | Member |  Host |   Role  |  State  | TL | Receive LSN | Lag | Replay LSN | Lag |
+    +--------+-------+---------+---------+----+-------------+-----+------------+-----+
+    | pgha1  | pgha1 | Leader  | running |  1 |             |     |            |     |
+    | pgha2  | pgha2 | Replica | running |  1 |   0/4000000 |   0 |  0/4000000 |   0 |
+    +--------+-------+---------+---------+----+-------------+-----+------------+-----+
+
+So at this point we have two of our 3 patroni database servers up and running now.
+
+Lets repeat the process for node pgha3
+
+    ssh pgha3 "cp -p /createRoles.sh /pgha/config; rm -rf /pgdata/17/data/; /patroniSetup.sh"
+
+Now start it
+
+    ssh pgha3 "nohup patroni /pgha/config/patroni.yaml > patroni.log 2>&1 &"
+
+And finally validate
+
+     patronictl -c /pgha/config/patroni.yaml list
+     
+    + Cluster: pgha_patroni_cluster (7573485601442316865) ----+-----+------------+-----+
+    | Member |  Host |   Role  |   State   | TL | Receive LSN | Lag | Replay LSN | Lag |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
+    | pgha1  | pgha1 | Leader  | running   |  1 |             |     |            |     |
+    | pgha2  | pgha2 | Replica | streaming |  1 |   0/6000060 |   0 |  0/6000060 |   0 |
+    | pgha3  | pgha3 | Replica | running   |  1 |   0/6000000 |   0 |  0/6000000 |   0 |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
+
+
+It takes a moment for it to build the replica and enter it's streaming state. 
+
+Repeat the check 
+
+     patronictl -c /pgha/config/patroni.yaml list
+     
+    + Cluster: pgha_patroni_cluster (7573485601442316865) ----+-----+------------+-----+
+    | Member |  Host |   Role  |   State   | TL | Receive LSN | Lag | Replay LSN | Lag |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
+    | pgha1  | pgha1 | Leader  | running   |  1 |             |     |            |     |
+    | pgha2  | pgha2 | Replica | streaming |  1 |   0/6000060 |   0 |  0/6000060 |   0 |
+    | pgha3  | pgha3 | Replica | streaming |  1 |   0/6000060 |   0 |  0/6000060 |   0 |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
+
+As you can see, we now have all 3 postgres database servers running and managed by patroni with **pgha1 as the primary**.
+
+
+## Some patroni administrative tasks
+
+
+For the purposes of this tutorial, we have purposely omitted the necessary entry for the highly privileged postgres superuser from the pg_hba.conf file in our Patroni cluster's dynamic configuration.
+
+This omission is deliberate, as it allows us to successfully demonstrate and practice the correct,  method for modifying pg_hba.conf entries in a Patroni managed environment by using the **patronictl edit-config** command.
+
+Managing this configuration through patronictl ensures the changes are centrally stored in the DCS (Distributed Configuration Store) and automatically propagated to all Primary and Replica nodes, maintaining cluster consistency.
+
+
+**Personal Side Note:** 
+
+***While Patroni is an absolutely awesome high availability tool, its architecture, which involves taking over almost all Postgres administrative and configuration tasks, can sometimes feel overwhelming for newcomers. For those seeking similar high-availability functionality like connection pooling, load balancing, and replication management without Patroni's deep integration and complexity, I personally lean towards pgpool. pgpool sits between the client and Postgres, offering powerful features without completely taking over the underlying database administration. I will be publishing a pgpool tutorial as well***
+
+
+### Adjusting pg_hba.conf
+
+As you can see, if I try to psql directly to phga2 from pgha1, I receive the following error.
+
+
+    psql -h pgha2
+    
+    psql: error: connection to server at "pgha2" (192.168.50.11), port 5432 failed: FATAL:  no pg_hba.conf entry for host "192.168.50.10", user "postgres", database "postgres", no encryption
+
+This is a very typical and easy to resolve issue by editing the pg_hba.conf file and reloading postgres. However, with patroni taking over all aspects of managing postgres, we should never directly make changes to postgres confion or runtime parameters as you normally would.  You need to perform the change using the Patroni control utility, patronictl edit-config, to ensure the rule is stored in the DCS and automatically propagated to all nodes in the cluster.
+
+
+
+    patronictl -c /pgha/config/patroni.yaml edit-config
+
+Opens up your editor with the following file in yaml format
+
+    loop_wait: 10
+    maximum_lag_on_failover: 1048576
+    postgresql:
+      parameters:
+        archive_command: /bin/true
+        archive_mode: true
+        archive_timeout: 600s
+        hot_standby: true
+        log_filename: postgresql-%a.log
+        log_line_prefix: '%m [%r] [%p]: [%l-1] user=%u,db=%d,host=%h '
+        log_lock_waits: 'on'
+        log_min_duration_statement: 500
+        logging_collector: 'on'
+        max_replication_slots: 10
+        max_wal_senders: 10
+        max_wal_size: 1GB
+        wal_keep_size: 4096
+        wal_level: logical
+        wal_log_hints: true
+      use_pg_rewind: true
+      use_slots: true
+    retry_timeout: 10
+    ttl: 30
+
+Make the necessary changes to include the pg_hba.conf setting.
+
+    loop_wait: 10
+    maximum_lag_on_failover: 1048576
+    postgresql:
+      parameters:
+        archive_command: /bin/true
+        archive_mode: true
+        archive_timeout: 600s
+        hot_standby: true
+        log_filename: postgresql-%a.log
+        log_line_prefix: '%m [%r] [%p]: [%l-1] user=%u,db=%d,host=%h '
+        log_lock_waits: 'on'
+        log_min_duration_statement: 500
+        logging_collector: 'on'
+        max_replication_slots: 10
+        max_wal_senders: 10
+        max_wal_size: 1GB
+        wal_keep_size: 4096
+        wal_level: logical
+        wal_log_hints: true
+      pg_hba:
+      - host all postgres 192.168.50.0/24 md5
+      use_pg_rewind: true
+      use_slots: true
+    retry_timeout: 10
+    ttl: 30
+
+You will be asked to confirm the changes. 
+
+Once confirmed, Patroni will propagate the changes to the other nodes in the cluster. And once it does, we should be good to go.
+
+    [postgres@pgha1 data]$ psql -h pgha2
+    psql (17.6)
+    Type "help" for help.
+    
+    postgres=#
+
+Now we can do a simple test to see replication working.
+
+First query pgha1. The primary.
+
+    psql -h pgha1 -c "select datname from pg_stat_database"
+      datname
+    -----------
+    
+     postgres
+     template1
+     template0
+    (4 rows)
+
+Now query one of the replicas, pgha2
+
+    psql -h pgha2 -c "select datname from pg_stat_database"
+      datname
+    -----------
+    
+     postgres
+     template1
+     template0
+    (4 rows)
+
+As you can see, they both have the same databases. Nothing has been created on the primary yet.
+
+Now, lets create a new database on the primary.
+
+    psql -h pgha1 -c "create database foobar"
+    CREATE DATABASE
+
+Now lets see if it was replicated to pgha2
+
+     psql -h pgha2 -c "select datname from pg_stat_database"
+      datname
+    -----------
+    
+     postgres
+     foobar
+     template1
+     template0
+    (5 rows)
+ 
+ As you can see it has been replicated.
 
