@@ -1,3 +1,10 @@
+
+# Postgres High Availability with Patroni Training
+
+Welcome to this free, self paced training documentation offered by Postgres Solutions! This comprehensive material is designed to guide you through the critical concepts and practical implementation of running a highly available database cluster using Postgres, orchestrated by Patroni, and leveraging etcd for distributed consensus.
+
+We aim to break down complex topics, clarify common pitfalls (like quorum sizing), and provide step by step instructions to build a resilient system.
+
 ## Table of Contents
 
 - [Postgres High Availability with Patroni Training](#postgres-high-availability-with-patroni-training)
@@ -51,12 +58,6 @@
   - [Load balancing on using psql](#load-balancing-on-using-psql)
     - [Connection String Load Balancing Parameters](#connection-string-load-balancing-parameters)
 
-
-# Postgres High Availability with Patroni Training
-
-Welcome to this free, self paced training documentation offered by Postgres Solutions! This comprehensive material is designed to guide you through the critical concepts and practical implementation of running a highly available database cluster using Postgres, orchestrated by Patroni, and leveraging etcd for distributed consensus.
-
-We aim to break down complex topics, clarify common pitfalls (like quorum sizing), and provide step by step instructions to build a resilient system.
 
 ## License and Credit
 
@@ -622,7 +623,111 @@ At this time we have done all the prework needed to run the script.
 
 The above command created the configuration file /pgha/config/patroni.yaml.
 
-===
+### The generated patroni.yaml file
+
+    namespace: pgha
+    scope: pgha_patroni_cluster
+    name: pgha1
+    
+    log:
+      dir: /var/log/patroni
+      filename: patroni.log
+      level: INFO
+      file_size: 26214400
+      file_num: 4
+    
+    restapi:
+        listen: 0.0.0.0:8008
+        connect_address: pgha1:8008
+    
+    etcd3:
+        hosts: pgha1:2379,pgha2:2379,pgha3:2379,pgha4:2379,pgha5:2379
+    
+    bootstrap:
+        dcs:
+            ttl: 30
+            loop_wait: 10
+            retry_timeout: 10
+            maximum_lag_on_failover: 1048576
+            postgresql:
+                use_pg_rewind: true
+                use_slots: true
+                parameters:
+                    wal_level: logical
+                    hot_standby: on
+                    wal_keep_size: 4096
+                    max_wal_senders: 10
+                    max_replication_slots: 10
+                    wal_log_hints: on
+                    archive_mode: on
+                    archive_command: /bin/true
+                    archive_timeout: 600s
+                    logging_collector: 'on'
+                    log_line_prefix: '%m [%r] [%p]: [%l-1] user=%u,db=%d,host=%h '
+                    log_filename: 'postgresql-%a.log'
+                    log_lock_waits: 'on'
+                    log_min_duration_statement: 500
+                    max_wal_size: 1GB
+    
+                #recovery_conf:
+                    #recovery_target_timeline: latest
+                    #restore_command: pgbackrest --config=/pgha/config/pgbackrest.conf --stanza= archive-get %f "%p"
+    
+        # some desired options for 'initdb'
+        initdb:
+            - encoding: UTF8
+            - data-checksums
+    
+        post_bootstrap: /pgha/config/createRoles.sh
+    
+        pg_hba: # Add the following lines to pg_hba.conf after running 'initdb'
+            - local all all trust
+            - host replication replicator 127.0.0.1/32 trust
+            - host replication replicator 0.0.0.0/0 md5
+    
+        # Users are now created in post bootstrap section
+    
+    postgresql:
+        cluster_name: pgha_patroni_cluster
+        listen: 0.0.0.0:5432
+        connect_address: pgha1:5432
+        data_dir: /pgdata/17/data
+        bin_dir: /usr/pgsql-17/bin/
+        pgpass: /pgha/config/pgpass
+    
+        authentication:
+            replication:
+                username: replicator
+                password: replicator
+            superuser:
+                username: postgres
+                password: postgres
+    
+        parameters:
+            unix_socket_directories: /var/run/postgresql/
+    
+        create_replica_methods:
+            - pgbackrest
+            - basebackup
+    
+        #pgbackrest:
+            #command: pgbackrest --config=/pgha/config/pgbackrest.conf --stanza=stanza= --delta restore
+            #keep_data: True
+            #no_params: True
+    
+        #recovery_conf:
+            #recovery_target_timeline: latest
+            #restore_command: pgbackrest --config=/pgha/config/pgbackrest.conf --stanza= archive-get %f \"%p\"
+    
+        basebackup:
+            checkpoint: 'fast'
+            wal-method: 'stream'
+    
+    tags:
+        nofailover: false
+        noloadbalance: false
+        clonefrom: false
+        nosync: false
 
 ## Lets breakdown the config file for some basic explanation
 
@@ -1006,16 +1111,16 @@ In order to connect to the servers from outside of the container, we can use the
 
      docker ps
     CONTAINER ID   IMAGE                COMMAND                  CREATED        STATUS        PORTS                                                                                                                                                                                                                   NAMES
-    0678ebcc6897   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6436->5432/tcp, [::]:6436->5432/tcp, 0.0.0.0:999>9999/tcp, [::]:9996->9999/tcp   pgha5
+    0678ebcc6897   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6436->5432/tcp, [::]:6436->5432/tcp, 0.0.0.0:9996->9999/tcp, [::]:9996->9999/tcp   pgha5
     3d4176eb4ad6   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6435->5432/tcp, [::]:6435->5432/tcp, 0.0.0.0:9995->9999/tcp, [::]:9995->9999/tcp   pgha4
-    fe0d666b46c4   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 60323/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6434->5432/tcp, [::]:6434->5432/tcp, 0.0.0.0:9994->9999/tcp, [::]:9994->9999/tcp   pgha3
+    fe0d666b46c4   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6434->5432/tcp, [::]:6434->5432/tcp, 0.0.0.0:9994->9999/tcp, [::]:9994->9999/tcp   pgha3
     ad917ca32d0a   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6433->5432/tcp, [::]:6433->5432/tcp, 0.0.0.0:9993->9999/tcp, [::]:9993->9999/tcp   pgha2
-    a312b7253c47   rocky9-pg17-bund   "/bin/bash -c /entry…"   31 hours ago   Up 7 hours    22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6432->5432/tcp, [::]:6432->5432/tcp, 0.0.0.0:9992->9999/tcp, [::]:9992->9999/tcp   pgha1
+    a312b7253c47   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 7 hours    22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6432->5432/tcp, [::]:6432->5432/tcp, 0.0.0.0:9992->9999/tcp, [::]:9992->9999/tcp   pgha1
 
    
  You can see that for pgha1, pgha2 and pgha3 we are mapping ports 6432, 6433 and 6434 to postgres port 5432 inside the containers.
 
-So if we wanted to connect directly to pgha1, we simply use the following connections string f psql
+So if we wanted to connect directly to pgha1, we simply use the following connections string for psql
 
     psql -h localhost -p 6432 -U postgres
     Password for user postgres:
