@@ -908,6 +908,96 @@ Now lets see if it was replicated to pgha2
  As you can see it has been replicated.
 
 
-## More to come
 
-This tutorial is a work in progress with more to be added. So, stay tuned ...
+
+## Load balancing on using psql
+
+Using a psql connection string to achieve client side load balancing and failover across multiple Postgres servers is possible by leveraging specific connection parameters, namely host, load_balance_hosts, and target_session_attrs.
+
+This functionality is built into the libpq library, which psql and many other Postgres clients use.
+
+We can now access our patroni cluster from the host machine without being inside a docker container.  We achieve this by using the mapped ports to postgres.
+
+### Connection String Load Balancing Parameters
+
+The general format involves listing multiple servers in the host parameter and then specifying how libpq should choose which one to connect to.
+
+**The host Parameter (Multiple Entries)**
+
+Instead of listing a single IP or hostname, you provide a comma-separated list of server addresses.
+
+    host=pgha1,pgha2,pgha3
+
+**The target_session_attrs Parameter (Failover/Load Balancing)**
+
+This parameter tells the client the desired state (or role) of the server it intends to connect to. This is crucial for distinguishing between the Primary and Replica nodes.
+
+This connects to the first available server regardless of its role, attempting them in the order listed.
+
+    psql "host=pgha1,pgha2,pgha3 dbname=foobar user=bubba target_session_attrs=any"
+
+
+This is a typical setup for a primary seeking client. It attempts to connect to any host, starting with a random selection, but only if that host is the writeable Primary server.
+
+    psql "host=pgha1,pgha2,pgha3 dbname=foobar user=bubba target_session_attrs=read-write load_balance_hosts=random"
+
+This setup is ideal for connecting read-intensive clients. It randomly selects one of the replica hosts (pgha2, pgha3) and ensures it connects only to a read-only server.
+
+
+    psql "host=pgha1,pgha2,pgha3   port=5432,5432,5432  dbname=foobar user=bubba  target_session_attrs=read-only  load_balance_hosts=random"
+
+
+In order to connect to the servers from outside of the container, we can use the port mappings defined in our docker run command which is showin in the file DockerRunThis.pgha
+
+
+     docker ps
+    CONTAINER ID   IMAGE                COMMAND                  CREATED        STATUS        PORTS                                                                                                                                                                                                                   NAMES
+    0678ebcc6897   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6436->5432/tcp, [::]:6436->5432/tcp, 0.0.0.0:9996->9999/tcp, [::]:9996->9999/tcp   pgha5
+    3d4176eb4ad6   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6435->5432/tcp, [::]:6435->5432/tcp, 0.0.0.0:9995->9999/tcp, [::]:9995->9999/tcp   pgha4
+    fe0d666b46c4   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6434->5432/tcp, [::]:6434->5432/tcp, 0.0.0.0:9994->9999/tcp, [::]:9994->9999/tcp   pgha3
+    ad917ca32d0a   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6433->5432/tcp, [::]:6433->5432/tcp, 0.0.0.0:9993->9999/tcp, [::]:9993->9999/tcp   pgha2
+    a312b7253c47   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 7 hours    22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6432->5432/tcp, [::]:6432->5432/tcp, 0.0.0.0:9992->9999/tcp, [::]:9992->9999/tcp   pgha1
+
+   
+ You can see that for pgha1, pgha2 and pgha3 we are mapping ports 6432, 6433 and 6434 to postgres port 5432 inside the containers.
+
+So if we wanted to connect directly to pgha1, we simply use the following connections string for psql
+
+    psql -h localhost -p 6432 -U postgres
+    Password for user postgres:
+    psql (17.6)
+    Type "help" for help.
+    
+    postgres=# select inet_server_addr();
+     inet_server_addr
+    ------------------
+     192.168.50.10
+    (1 row)
+
+To use postgres built in load balancing connection string with the latest version of **libpq** , the postgres client library, we use the following connection string.
+
+    psql 'host=localhost,localhost,localhost port=6432,6433,6434 user=postgres password=postgres load_balance_hosts=random target_session_attrs=any'
+
+Notice the list of hosts are all the same. Localhost. However, the list of ports are different.  The list of ports are in the same order as the host list. So the first port listed (6432) would be associated with the first localhost listed.
+
+Lets break this down and how it works
+
+
+As you can see, every time we execute the command, we get a random server from the list specified in our connections string.
+
+    psql 'host=localhost,localhost,localhost port=6432,6433,6434 user=postgres password=postgres load_balance_hosts=random target_session_attrs=any' -c "select inet_server_addr()"
+     inet_server_addr
+    ------------------
+     192.168.50.12
+
+And another selection
+
+     psql 'host=localhost,localhost,localhost port=6432,6433,6434 user=postgres password=postgres load_balance_hosts=random target_session_attrs=any' -c "select inet_server_addr()"
+     inet_server_addr
+    ------------------
+     192.168.50.11
+    (1 row)
+
+
+
+
