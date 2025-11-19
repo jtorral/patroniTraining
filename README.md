@@ -1102,7 +1102,7 @@ The switchover is executed to minimize downtime for tasks like OS patching, hard
 
 **Why have a failover option with patronictl if it's automatic?**
 
-Patroni provides commands to trigger both a manual switchover (**patronictl switchover**) and a manual failover (**patronictl failover**) is to give you, the administrator complete control over the cluster's state during maintenance, recovery, or testing scenarios that fall outside of the normal automatic processes.
+Patroni provides commands to trigger both a manual switchover (**patronictl switchover**) and a manual failover (**patronictl failover**) intended to give you, the administrator complete control over the cluster's state during maintenance, recovery, or testing scenarios that fall outside of the normal automatic processes.
 
 Here we can see the current state of our cluster.  It shows us that pgha3 is the **Leader** ( Primary )
 
