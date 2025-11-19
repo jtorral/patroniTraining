@@ -1,10 +1,3 @@
-
-# Postgres High Availability with Patroni Training
-
-Welcome to this free, self paced training documentation offered by Postgres Solutions! This comprehensive material is designed to guide you through the critical concepts and practical implementation of running a highly available database cluster using Postgres, orchestrated by Patroni, and leveraging etcd for distributed consensus.
-
-We aim to break down complex topics, clarify common pitfalls (like quorum sizing), and provide step by step instructions to build a resilient system.
-
 ## Table of Contents
 
 - [Postgres High Availability with Patroni Training](#postgres-high-availability-with-patroni-training)
@@ -46,6 +39,7 @@ We aim to break down complex topics, clarify common pitfalls (like quorum sizing
     - [Copy the createRoles.sh script](#copy-the-createroles-sh-script)
     - [Empty the postgres data directory](#empty-the-postgres-data-directory)
     - [Run the setupPatroni.sh script](#run-the-setuppatroni-sh-script)
+    - [The generated patroni.yaml file](#the-generated-patroni-yaml-file)
   - [Lets breakdown the config file for some basic explanation](#lets-breakdown-the-config-file-for-some-basic-explanation)
       - [Cluster Identity & Logging](#cluster-identity-logging)
       - [Management Interfaces (restapi and etcd3)](#management-interfaces-restapi-and-etcd3)
@@ -55,9 +49,21 @@ We aim to break down complex topics, clarify common pitfalls (like quorum sizing
     - [Start patroni on the remaining nodes 1 at a time.](#start-patroni-on-the-remaining-nodes-1-at-a-time)
   - [Some patroni administrative tasks](#some-patroni-administrative-tasks)
     - [Adjusting pg_hba.conf](#adjusting-pg-hba-conf)
+    - [patronictl  (Failove vs Switchover)](#patronictl-failove-vs-switchover)
+      - [Failover](#failover)
+      - [Switchover](#switchover)
+      - [Running patronictl with failover](#running-patronictl-with-failover)
+      - [Running patronictl with switchover](#running-patronictl-with-switchover)
   - [Load balancing on using psql](#load-balancing-on-using-psql)
     - [Connection String Load Balancing Parameters](#connection-string-load-balancing-parameters)
 
+
+
+# Postgres High Availability with Patroni Training
+
+Welcome to this free, self paced training documentation offered by Postgres Solutions! This comprehensive material is designed to guide you through the critical concepts and practical implementation of running a highly available database cluster using Postgres, orchestrated by Patroni, and leveraging etcd for distributed consensus.
+
+We aim to break down complex topics, clarify common pitfalls (like quorum sizing), and provide step by step instructions to build a resilient system.
 
 ## License and Credit
 
@@ -1067,6 +1073,130 @@ Now lets see if it was replicated to pgha2
  As you can see it has been replicated.
 
 
+### patronictl  (Failove vs Switchover)
+
+The primary difference between a failover and a switchover in Patroni lies in who initiates the action and the intent behind the role change.
+
+#### Failover
+
+A failover is an unplanned, automatic process where Patroni detects that the current Primary node is unavailable or unhealthy (based on the cluster's health checks and loop_wait settings).
+
+ - Patroni's cluster members notice the primary's status key in the DCS  (etcd) has expired. 
+ - The remaining healthy replica nodes race to  acquire the leader key from etcd. 
+ - The winning replica is promoted to  the new primary. 
+ - The remaining replicas reconfigure themselves to  stream data from the new primary.
+
+The goal of a failover is to maintain service availability with the highest priority, assuming the old Primary is dead.
+
+#### Switchover
+
+A switchover is a controlled, planned process initiated manually by the database administrator using the patronictl switchover command.
+
+- The administrator specifies the current primary and the desired target replica to be promoted.
+- Patroni confirms that the target replica is fully synchronized with the current primary (zero lag).
+- Patroni contacts the current primary and instructs it to demote itself to a replica and stop accepting writes.
+- Patroni promotes the healthy target replica to the new Primary.
+- The old primary and all other replicas automatically reconfigure themselves to follow the new primary.
+
+The switchover is executed to minimize downtime for tasks like OS patching, hardware migration, or verifying that the failover mechanism works smoothly.
+
+**Why have a failover option with patronictl if it's automatic?**
+
+Patroni provides commands to trigger both a manual switchover (**patronictl switchover**) and a manual failover (**patronictl failover**) is to give you, the administrator complete control over the cluster's state during maintenance, recovery, or testing scenarios that fall outside of the normal automatic processes.
+
+Here we can see the current state of our cluster.  It shows us that pgha3 is the **Leader** ( Primary )
+
+    patronictl -c /pgha/config/patroni.yaml list
+    
+    + Cluster: pgha_patroni_cluster (7573485601442316865) ----+-----+------------+-----+
+    | Member |  Host |   Role  |   State   | TL | Receive LSN | Lag | Replay LSN | Lag |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
+    | pgha1  | pgha1 | Replica | streaming |  5 |   0/F000000 |   0 |  0/F000000 |   0 |
+    | pgha2  | pgha2 | Replica | streaming |  5 |   0/F000000 |   0 |  0/F000000 |   0 |
+    | pgha3  | pgha3 | Leader  | running   |  5 |             |     |            |     |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
+
+#### Running patronictl with failover
+
+If we wanted to make pgha1 the new primary, we could simply run the following command with the following prompts and results.
+
+ patronictl -c /pgha/config/patroni.yaml failover
+ 
+
+    Current cluster topology
+    + Cluster: pgha_patroni_cluster (7573485601442316865) ----+-----+------------+-----+
+    | Member |  Host |   Role  |   State   | TL | Receive LSN | Lag | Replay LSN | Lag |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
+    | pgha1  | pgha1 | Replica | streaming |  5 |   0/F000000 |   0 |  0/F000000 |   0 |
+    | pgha2  | pgha2 | Replica | streaming |  5 |   0/F000000 |   0 |  0/F000000 |   0 |
+    | pgha3  | pgha3 | Leader  | running   |  5 |             |     |            |     |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
+    
+    Candidate ['pgha1', 'pgha2'] []: pgha1
+    Are you sure you want to failover cluster pgha_patroni_cluster, demoting current leader pgha3? [y/N]: y
+    2025-11-19 04:25:03.59276 Successfully failed over to "pgha1"
+    
+    + Cluster: pgha_patroni_cluster (7573485601442316865) --+-----+------------+-----+
+    | Member |  Host |   Role  |  State  | TL | Receive LSN | Lag | Replay LSN | Lag |
+    +--------+-------+---------+---------+----+-------------+-----+------------+-----+
+    | pgha1  | pgha1 | Leader  | running |  5 |             |     |            |     |
+    | pgha2  | pgha2 | Replica | running |  5 |  0/100000A0 |   0 | 0/100000A0 |   0 |
+    | pgha3  | pgha3 | Replica | stopped |    |     unknown |     |    unknown |     |
+    +--------+-------+---------+---------+----+-------------+-----+------------+-----+
+
+Notice the old Leader is not yet in a stable state, it is rebuilding itself.
+
+Running the following once more, shows us that all is now operating as expected.
+
+patronictl -c /pgha/config/patroni.yaml list
+
+    + Cluster: pgha_patroni_cluster (7573485601442316865) ----+-----+------------+-----+
+    | Member |  Host |   Role  |   State   | TL | Receive LSN | Lag | Replay LSN | Lag |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
+    | pgha1  | pgha1 | Leader  | running   |  6 |             |     |            |     |
+    | pgha2  | pgha2 | Replica | streaming |  6 |  0/100001E0 |   0 | 0/100001E0 |   0 |
+    | pgha3  | pgha3 | Replica | streaming |  6 |  0/100001E0 |   0 | 0/100001E0 |   0 |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
+
+#### Running patronictl with switchover
+
+     patronictl -c /pgha/config/patroni.yaml switchover
+     
+    Current cluster topology
+    + Cluster: pgha_patroni_cluster (7573485601442316865) ----+-----+------------+-----+
+    | Member |  Host |   Role  |   State   | TL | Receive LSN | Lag | Replay LSN | Lag |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
+    | pgha1  | pgha1 | Leader  | running   |  6 |             |     |            |     |
+    | pgha2  | pgha2 | Replica | streaming |  6 |  0/100001E0 |   0 | 0/100001E0 |   0 |
+    | pgha3  | pgha3 | Replica | streaming |  6 |  0/100001E0 |   0 | 0/100001E0 |   0 |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
+    
+    Primary [pgha1]:
+    Candidate ['pgha2', 'pgha3'] []: pgha2
+    When should the switchover take place (e.g. 2025-11-19T05:27 )  [now]:
+    Are you sure you want to switchover cluster pgha_patroni_cluster, demoting current leader pgha1? [y/N]: y
+    
+    2025-11-19 04:27:57.58415 Successfully switched over to "pgha2"
+    
+    + Cluster: pgha_patroni_cluster (7573485601442316865) --+-----+------------+-----+
+    | Member |  Host |   Role  |  State  | TL | Receive LSN | Lag | Replay LSN | Lag |
+    +--------+-------+---------+---------+----+-------------+-----+------------+-----+
+    | pgha1  | pgha1 | Replica | stopped |    |     unknown |     |    unknown |     |
+    | pgha2  | pgha2 | Leader  | running |  7 |             |     |            |     |
+    | pgha3  | pgha3 | Replica | running |  6 |  0/110000A0 |   0 | 0/110000A0 |   0 |
+    +--------+-------+---------+---------+----+-------------+-----+------------+-----+
+
+And now our new Leader is pgha2
+
+    patronictl -c /pgha/config/patroni.yaml list
+    
+    + Cluster: pgha_patroni_cluster (7573485601442316865) ----+-----+------------+-----+
+    | Member |  Host |   Role  |   State   | TL | Receive LSN | Lag | Replay LSN | Lag |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
+    | pgha1  | pgha1 | Replica | streaming |  7 |  0/110001E0 |   0 | 0/110001E0 |   0 |
+    | pgha2  | pgha2 | Leader  | running   |  7 |             |     |            |     |
+    | pgha3  | pgha3 | Replica | streaming |  7 |  0/110001E0 |   0 | 0/110001E0 |   0 |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
 
 
 ## Load balancing on using psql
@@ -1112,10 +1242,10 @@ In order to connect to the servers from outside of the container, we can use the
      docker ps
     CONTAINER ID   IMAGE                COMMAND                  CREATED        STATUS        PORTS                                                                                                                                                                                                                   NAMES
     0678ebcc6897   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6436->5432/tcp, [::]:6436->5432/tcp, 0.0.0.0:9996->9999/tcp, [::]:9996->9999/tcp   pgha5
-    3d4176eb4ad6   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6435->5432/tcp, [::]:6435->5432/tcp, 0.0.0.0:9995->9999/tcp, [::]:9995->9999/tcp   pgha4
+    3d4176eb4ad6   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, /tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6435->5432/tcp, [::]:6435->5432/tcp, 0.0.0.0:9995->9999/tcp, [::]:9995->9999/tcp   pgha4
     fe0d666b46c4   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6434->5432/tcp, [::]:6434->5432/tcp, 0.0.0.0:9994->9999/tcp, [::]:9994->9999/tcp   pgha3
-    ad917ca32d0a   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6433->5432/tcp, [::]:6433->5432/tcp, 0.0.0.0:9993->9999/tcp, [::]:9993->9999/tcp   pgha2
-    a312b7253c47   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 7 hours    22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6432->5432/tcp, [::]:6432->5432/tcp, 0.0.0.0:9992->9999/tcp, [::]:9992->9999/tcp   pgha1
+    ad917ca32d0a   rocky9-pg17-bundle   "/bin/bash -c /entryâ31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6433->5432/tcp, [::]:6433->5432/tcp, 0.0.0.0:9993->9999/tcp, [::]:9993->9999/tcp   pgha2
+    a312b7253c47   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 7 hours    22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6432->5432/tcp, [::]:6432->543tcp, 0.0.0.0:9992->9999/tcp, [::]:9992->9999/tcp   pgha1
 
    
  You can see that for pgha1, pgha2 and pgha3 we are mapping ports 6432, 6433 and 6434 to postgres port 5432 inside the containers.
@@ -1156,7 +1286,4 @@ And another selection
     ------------------
      192.168.50.11
     (1 row)
-
-
-
 
