@@ -1,3 +1,57 @@
+## Table of Contents
+
+- [Postgres High Availability with Patroni Training](#postgres-high-availability-with-patroni-training)
+  - [License and Credit](#license-and-credit)
+  - [Support Our Work](#support-our-work)
+  - [About this tutorial](#about-this-tutorial)
+- [Lets get this out of the way first!](#lets-get-this-out-of-the-way-first)
+  - [The etcd Mystery and Critical Misconception. Your etcd Quorum](#the-etcd-mystery-and-critical-misconception-your-etcd-quorum)
+    - [Don't skip this section. Even if you think you already know about quorums.](#don-t-skip-this-section-even-if-you-think-you-already-know-about-quorums)
+  - [Why Your Patroni Node Count Doesn't Determine Your etcd Quorum](#why-your-patroni-node-count-doesn-t-determine-your-etcd-quorum)
+  - [The Correct etcd Quorum Sizing Rule](#the-correct-etcd-quorum-sizing-rule)
+  - [A word about our deployment for this tutorial.](#a-word-about-our-deployment-for-this-tutorial)
+    - [Centralized Administration via /pgha](#centralized-administration-via-pgha)
+  - [Setting up your docker environment](#setting-up-your-docker-environment)
+  - [Simplifying Deployment with genDeploy](#simplifying-deployment-with-gendeploy)
+  - [Service Management and Configuration Formats](#service-management-and-configuration-formats)
+    - [The etcd Configuration File Format Pitfall](#the-etcd-configuration-file-format-pitfall)
+  - [Getting started](#getting-started)
+    - [Create your deployment files](#create-your-deployment-files)
+  - [Important Note on IP Address Management with genDeploy](#important-note-on-ip-address-management-with-gendeploy)
+    - [The Risk of Conflicts](#the-risk-of-conflicts)
+    - [Create the containers](#create-the-containers)
+    - [Start the containers](#start-the-containers)
+    - [Naming convention](#naming-convention)
+    - [Hostname Options](#hostname-options)
+  - [Create the aliases ( Optional for this tutorial )](#create-the-aliases-optional-for-this-tutorial)
+    - [As the user root](#as-the-user-root)
+  - [setup logging folders and permissions.](#setup-logging-folders-and-permissions)
+  - [Create etcd configuration files](#create-etcd-configuration-files)
+  - [Create the etcd configuration file on remaining nodes in cluster](#create-the-etcd-configuration-file-on-remaining-nodes-in-cluster)
+  - [What does all this mean?](#what-does-all-this-mean)
+  - [After starting Etcd, do Ineed to change the cluster state to existing from new?](#after-starting-etcd-do-ineed-to-change-the-cluster-state-to-existing-from-new)
+  - [So when do I use existing ?](#so-when-do-i-use-existing)
+  - [Start etcd](#start-etcd)
+  - [Start etcd on the remaining nodes.](#start-etcd-on-the-remaining-nodes)
+  - [View the etcd member list](#view-the-etcd-member-list)
+  - [Check etcd status](#check-etcd-status)
+  - [Patroni setup](#patroni-setup)
+    - [Copy the createRoles.sh script](#copy-the-createroles-sh-script)
+    - [Empty the postgres data directory](#empty-the-postgres-data-directory)
+    - [Run the setupPatroni.sh script](#run-the-setuppatroni-sh-script)
+  - [Lets breakdown the config file for some basic explanation](#lets-breakdown-the-config-file-for-some-basic-explanation)
+      - [Cluster Identity & Logging](#cluster-identity-logging)
+      - [Management Interfaces (restapi and etcd3)](#management-interfaces-restapi-and-etcd3)
+      - [Bootstrap Configuration](#bootstrap-configuration)
+      - [Tags](#tags)
+  - [Start patroni manually in the background](#start-patroni-manually-in-the-background)
+    - [Start patroni on the remaining nodes 1 at a time.](#start-patroni-on-the-remaining-nodes-1-at-a-time)
+  - [Some patroni administrative tasks](#some-patroni-administrative-tasks)
+    - [Adjusting pg_hba.conf](#adjusting-pg-hba-conf)
+  - [Load balancing on using psql](#load-balancing-on-using-psql)
+    - [Connection String Load Balancing Parameters](#connection-string-load-balancing-parameters)
+
+
 # Postgres High Availability with Patroni Training
 
 Welcome to this free, self paced training documentation offered by Postgres Solutions! This comprehensive material is designed to guide you through the critical concepts and practical implementation of running a highly available database cluster using Postgres, orchestrated by Patroni, and leveraging etcd for distributed consensus.
@@ -952,16 +1006,16 @@ In order to connect to the servers from outside of the container, we can use the
 
      docker ps
     CONTAINER ID   IMAGE                COMMAND                  CREATED        STATUS        PORTS                                                                                                                                                                                                                   NAMES
-    0678ebcc6897   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6436->5432/tcp, [::]:6436->5432/tcp, 0.0.0.0:9996->9999/tcp, [::]:9996->9999/tcp   pgha5
+    0678ebcc6897   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6436->5432/tcp, [::]:6436->5432/tcp, 0.0.0.0:999>9999/tcp, [::]:9996->9999/tcp   pgha5
     3d4176eb4ad6   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6435->5432/tcp, [::]:6435->5432/tcp, 0.0.0.0:9995->9999/tcp, [::]:9995->9999/tcp   pgha4
-    fe0d666b46c4   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6434->5432/tcp, [::]:6434->5432/tcp, 0.0.0.0:9994->9999/tcp, [::]:9994->9999/tcp   pgha3
+    fe0d666b46c4   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 60323/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6434->5432/tcp, [::]:6434->5432/tcp, 0.0.0.0:9994->9999/tcp, [::]:9994->9999/tcp   pgha3
     ad917ca32d0a   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6433->5432/tcp, [::]:6433->5432/tcp, 0.0.0.0:9993->9999/tcp, [::]:9993->9999/tcp   pgha2
-    a312b7253c47   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 7 hours    22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6432->5432/tcp, [::]:6432->5432/tcp, 0.0.0.0:9992->9999/tcp, [::]:9992->9999/tcp   pgha1
+    a312b7253c47   rocky9-pg17-bund   "/bin/bash -c /entry…"   31 hours ago   Up 7 hours    22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6432->5432/tcp, [::]:6432->5432/tcp, 0.0.0.0:9992->9999/tcp, [::]:9992->9999/tcp   pgha1
 
    
  You can see that for pgha1, pgha2 and pgha3 we are mapping ports 6432, 6433 and 6434 to postgres port 5432 inside the containers.
 
-So if we wanted to connect directly to pgha1, we simply use the following connections string for psql
+So if we wanted to connect directly to pgha1, we simply use the following connections string f psql
 
     psql -h localhost -p 6432 -U postgres
     Password for user postgres:
