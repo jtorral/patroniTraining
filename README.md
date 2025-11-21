@@ -98,6 +98,12 @@ This tutorial is designed not only to guide you through setting up a highly avai
 
 To focus purely on the architecture and consensus mechanics without complex installation steps, we will be leveraging Docker containers. These containers conveniently include Postgres, Patroni, and etcd with many necessary dependencies pre-configured. We will carefully walk through the configuration and setup process, ensuring you gain a complete and clear understanding of how these components interact and how to properly secure your critical quorum for true high availability.
 
+## A late night added bonus of pgbackrest. Please read this.
+
+This document was originally created without the intention of using pgbackrest. Therefore, the configuration outlined does not include the pgbackrest setup and configuration as if we had planned for it. Instead, pgbackrest is treated as an afterthought and the process details how to setup and configure pgbackrest after we have already established our HA environment.  This is actually a good thing as it walks you through a common scenario. 
+
+I will eventually, create a 2nd set of docs where it is treated as part of the original plan and link to it form here.
+
 # Lets get this out of the way first!
 
 ## The etcd Mystery and Critical Misconception. Your etcd Quorum
@@ -1255,18 +1261,18 @@ In order to connect to the servers from outside of the container, we can use the
 
      docker ps
     CONTAINER ID   IMAGE                COMMAND                  CREATED        STATUS        PORTS                                                                                                                                                                                                                   NAMES
-    0678ebcc6897   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6436->5432/tcp, [::]:6436->5432/tcp, 0.0.0.0:9996->9999/tcp, [::]:999>9999/tcp   pgha5
+    0678ebcc6897   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6436->5432/tcp, [::]:6436->5432/tcp, 0.0.0.0:9996->9999/tcp, [::]:9996->9999/tcp   pgha5
     3d4176eb4ad6   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6435->5432/tcp, [::]:6435->5432/tcp, 0.0.0.0:9995->9999/tcp, [::]:9995->9999/tcp   pgha4
-    fe0d666b46c4   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/ 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6434->5432/tcp, [::]:6434->5432/tcp, 0.0.0.0:9994->9999/tcp, [::]:9994->9999/tcp   pgha3
+    fe0d666b46c4   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6434->5432/tcp, [::]:6434->5432/tcp, 0.0.0.0:9994->9999/tcp, [::]:9994->9999/tcp   pgha3
     ad917ca32d0a   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6433->5432/tcp, [::]:6433->5432/tcp, 0.0.0.0:9993->9999/tcp, [::]:9993->9999/tcp   pgha2
-    a312b7253c47   rocky9-pg17-bundle   "/bin/bash -c /ery…"   31 hours ago   Up 7 hours    22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6432->5432/tcp, [::]:6432->5432/tcp, 0.0.0.0:9992->9999/tcp, [::]:9992->9999/tcp   pgha1
+    a312b7253c47   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 7 hours    22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6432->5432/tcp, [::]:6432->5432/tcp, 0.0.0.0:9992->9999/tcp, [::]:9992->9999/tcp   pgha1
 
    
  You can see that for pgha1, pgha2 and pgha3 we are mapping ports 6432, 6433 and 6434 to postgres port 5432 inside the containers.
 
 So if we wanted to connect directly to pgha1, we simply use the following connections string for psql
 
-    psql -h calhost -p 6432 -U postgres
+    psql -h localhost -p 6432 -U postgres
     Password for user postgres:
     psql (17.6)
     Type "help" for help.
@@ -1350,7 +1356,7 @@ We then simply create the container and start it.
 That's it. We now have our pgbackrest1 container up and running on the same network as our other containers. 
 
     docker ps | grep pgbackrest
-    c3ff6cbda7f7   rocky9-pg17-bundle   "/bin/bash -c /entry…"   5 minutes ago   Up 5 minutes   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp,032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6438->5432/tcp, [::]:6438->5432/tcp, 0.0.0.0:9998->9999/tcp, [::]:9998->9999/tcp   pgbackrest1
+    c3ff6cbda7f7   rocky9-pg17-bundle   "/bin/bash -c /entry…"   5 minutes ago   Up 5 minutes   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6438->5432/tcp, [::]:6438->5432/tcp, 0.0.0.0:9998->9999/tcp, [::]:9998->9999/tcp   pgbackrest1
 
 
 Log on to the container
