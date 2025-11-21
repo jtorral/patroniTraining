@@ -1,3 +1,4 @@
+
 ## Table of Contents
 
 - [Postgres High Availability with Patroni Training](#postgres-high-availability-with-patroni-training)
@@ -56,7 +57,18 @@
       - [Running patronictl with switchover](#running-patronictl-with-switchover)
   - [Load balancing on using psql](#load-balancing-on-using-psql)
     - [Connection String Load Balancing Parameters](#connection-string-load-balancing-parameters)
-
+  - [Backup solution with pgBackrest](#backup-solution-with-pgbackrest)
+    - [What is pgBackRest?](#what-is-pgbackrest)
+    - [Creae a backup server](#creae-a-backup-server)
+    - [Configure backup server](#configure-backup-server)
+    - [Create pgbackrest.conf](#create-pgbackrest-conf)
+    - [Explanation](#explanation)
+    - [Create pgbackrest.conf on database servers](#create-pgbackrest-conf-on-database-servers)
+    - [Additional cleanup](#additional-cleanup)
+    - [Create the stanza](#create-the-stanza)
+    - [Update postgres config using patronictl to use pgbackrest](#update-postgres-config-using-patronictl-to-use-pgbackrest)
+    - [Create a backup](#create-a-backup)
+    - [pgBackrest Online Documentation](#pgbackrest-online-documentation)
 
 
 # Postgres High Availability with Patroni Training
@@ -64,6 +76,8 @@
 Welcome to this free, self paced training documentation offered by Postgres Solutions! This comprehensive material is designed to guide you through the critical concepts and practical implementation of running a highly available database cluster using Postgres, orchestrated by Patroni, and leveraging etcd for distributed consensus.
 
 We aim to break down complex topics, clarify common pitfalls (like quorum sizing), and provide step by step instructions to build a resilient system.
+
+**Additionally, an added bonus of setting up pgbackrest for backups and recovery will be included.**
 
 ## License and Credit
 
@@ -1102,7 +1116,7 @@ The switchover is executed to minimize downtime for tasks like OS patching, hard
 
 **Why have a failover option with patronictl if it's automatic?**
 
-Patroni provides commands to trigger both a manual switchover (**patronictl switchover**) and a manual failover (**patronictl failover**) intended to give you, the administrator complete control over the cluster's state during maintenance, recovery, or testing scenarios that fall outside of the normal automatic processes.
+Patroni provides commands to trigger both a manual switchover (**patronictl switchover**) and a manual failover (**patronictl failover**) is to give you, the administrator complete control over the cluster's state during maintenance, recovery, or testing scenarios that fall outside of the normal automatic processes.
 
 Here we can see the current state of our cluster.  It shows us that pgha3 is the **Leader** ( Primary )
 
@@ -1241,18 +1255,18 @@ In order to connect to the servers from outside of the container, we can use the
 
      docker ps
     CONTAINER ID   IMAGE                COMMAND                  CREATED        STATUS        PORTS                                                                                                                                                                                                                   NAMES
-    0678ebcc6897   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6436->5432/tcp, [::]:6436->5432/tcp, 0.0.0.0:9996->9999/tcp, [::]:9996->9999/tcp   pgha5
-    3d4176eb4ad6   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, /tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6435->5432/tcp, [::]:6435->5432/tcp, 0.0.0.0:9995->9999/tcp, [::]:9995->9999/tcp   pgha4
-    fe0d666b46c4   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6434->5432/tcp, [::]:6434->5432/tcp, 0.0.0.0:9994->9999/tcp, [::]:9994->9999/tcp   pgha3
-    ad917ca32d0a   rocky9-pg17-bundle   "/bin/bash -c /entryâ31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6433->5432/tcp, [::]:6433->5432/tcp, 0.0.0.0:9993->9999/tcp, [::]:9993->9999/tcp   pgha2
-    a312b7253c47   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 7 hours    22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6432->5432/tcp, [::]:6432->543tcp, 0.0.0.0:9992->9999/tcp, [::]:9992->9999/tcp   pgha1
+    0678ebcc6897   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6436->5432/tcp, [::]:6436->5432/tcp, 0.0.0.0:9996->9999/tcp, [::]:999>9999/tcp   pgha5
+    3d4176eb4ad6   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6435->5432/tcp, [::]:6435->5432/tcp, 0.0.0.0:9995->9999/tcp, [::]:9995->9999/tcp   pgha4
+    fe0d666b46c4   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/ 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6434->5432/tcp, [::]:6434->5432/tcp, 0.0.0.0:9994->9999/tcp, [::]:9994->9999/tcp   pgha3
+    ad917ca32d0a   rocky9-pg17-bundle   "/bin/bash -c /entry…"   31 hours ago   Up 31 hours   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6433->5432/tcp, [::]:6433->5432/tcp, 0.0.0.0:9993->9999/tcp, [::]:9993->9999/tcp   pgha2
+    a312b7253c47   rocky9-pg17-bundle   "/bin/bash -c /ery…"   31 hours ago   Up 7 hours    22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6432->5432/tcp, [::]:6432->5432/tcp, 0.0.0.0:9992->9999/tcp, [::]:9992->9999/tcp   pgha1
 
    
  You can see that for pgha1, pgha2 and pgha3 we are mapping ports 6432, 6433 and 6434 to postgres port 5432 inside the containers.
 
 So if we wanted to connect directly to pgha1, we simply use the following connections string for psql
 
-    psql -h localhost -p 6432 -U postgres
+    psql -h calhost -p 6432 -U postgres
     Password for user postgres:
     psql (17.6)
     Type "help" for help.
@@ -1286,4 +1300,359 @@ And another selection
     ------------------
      192.168.50.11
     (1 row)
+
+
+## Backup solution with pgBackrest
+
+Well, this is an added bonus to this free self paced tutorial I am publishing.  Why not include pgBackrest since it's included in the Docker image.
+
+### What is pgBackRest?
+
+pgBackrest is a backup and restore utility designed specifically for Postgres. Unlike generic file system backup tools, pgBackrest is postgres aware. It understands the database's architecture, including its WAL, which allows it to perform non disruptive, consistent backups and, crucially, enable Point In Time Recovery (PITR).
+
+It facilitates full, differential, and incremental backups along with the continuous archival of WAL files, which, when combined with a full backup, lets you restore your database to any point in time right down to the second since the last full backup.
+
+In our architecture for this tutorial , we introduce a dedicated repository server (backup host we will call **pgbackrest1**) that plays the central role in our backup strategy.
+
+This dedicated server will host the pgbackrest repository, which is a centralized location where all our backups and WAL archives will be stored.
+
+We will primarily run the pgbackrest backup command from the repository server. This command initiates a secure, network based connection via SSH to the Patroni cluster nodes. Lucky for us,  we already have SSH setup in our Docker containers.
+
+We will configure the postgres via patroni to use pgbackrests's archive push command for its archive_command. This means that every time postgres generates a WAL file, it is immediately and automatically sent to the pgbackrest repository on the backup server, ensuring we have a continuous, up to the second recovery stream.
+
+By centralizing the repository on a dedicated server, we isolate the backups from potential failures of the database cluster nodes, creating a resilient and scalable disaster recovery solution.
+
+With all that out of the way, lets start.
+
+### Creae a backup server
+
+Once again we will use genDeploy for this as it makes creating Docker containers much easier.
+
+     ./genDeploy -c pgbackrest -w pghanet -n 1 -i rocky9-pg17-bundle
+    
+            The following docker deploy utility manager file: DockerRunThis.pgbackrest has been created. To manage your new deploy run the file "./DockerRunThis.pgbackrest"
+
+This time our structure is much more simple.
+
+We simply just specify a container name, the number of containers and an existing network. By attaching it to the same network, we have full access to it. 
+
+We then simply create the container and start it.
+
+
+    ./DockerRunThis.pgbackrest create
+    Using existing network pghanet No need to create the network at this time.
+    c3ff6cbda7f7f3ec59c32630781d1014762a3257833b9e829e38c8a71bcce8c7
+    
+    ./DockerRunThis.pgbackrest start
+    Starting containers  pgbackrest1
+    pgbackrest1
+
+That's it. We now have our pgbackrest1 container up and running on the same network as our other containers. 
+
+    docker ps | grep pgbackrest
+    c3ff6cbda7f7   rocky9-pg17-bundle   "/bin/bash -c /entry…"   5 minutes ago   Up 5 minutes   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp,032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6438->5432/tcp, [::]:6438->5432/tcp, 0.0.0.0:9998->9999/tcp, [::]:9998->9999/tcp   pgbackrest1
+
+
+Log on to the container
+
+    docker exec -it pgbackrest1 /bin/bash
+
+Switch to user postgres
+
+    sudo -E -u postgres /bin/bash -l
+
+### Configure backup server
+
+     mkdir -p /pgha/data/pgbackrest
+
+cd to config folder
+
+    cd /pgha/data/pgbackrest
+
+
+### Create pgbackrest.conf
+
+    [global]
+    
+    repo1-path=/pgha/data/pgbackrest
+    repo1-retention-archive-type=full
+    repo1-retention-full=2
+    
+    process-max=2
+    log-level-console=info
+    log-level-file=info
+    start-fast=y
+    delta=y
+    backup-standby=y
+        
+    [pgha]
+    
+    pg1-host=pgha1
+    pg1-port=5432
+    pg1-path=/pgdata/17/data
+    
+    pg2-host=pgha2
+    pg2-port=5432
+    pg2-path=/pgdata/17/data
+    
+    pg3-host=pgha3
+    pg3-port=5432
+    pg3-path=/pgdata/17/data
+
+
+### Explanation
+
+- **repo1-path** defines the absolute path of where our backups will be saved on the repository server which in our tutorial here is pgbackrest1.
+- **repo1-retention-archive-type** defines how the retention policy is applied to the archived WAL segments. Setting it to full means that all WAL segments required to restore any retained full backup will be kept. If you delete a full backup, all WAL files associated only with that backup will be removed.
+- **repo1-retention-full** defines how many full backups to retain
+- **process-max** defines the max number of parallel jobs that can be run for the backups, archiving, restoring etc ...
+- **start-fast** attempt to skip recovery and bring the restored cluster online faster by relying on the built in Postgres recovery process to complete the transition to a consistent state
+- **delta** enables delta restore, where pgBackRest only copies the files that have changed, saving significant time when restoring to a host that already has some of the data (e.g., restoring over a corrupted cluster).
+- **backup-standby** allows pgbackrest to select a standby instance to execute the backup, rather than strictly requiring the primary. This reduces the performance load on the primary server.
+
+Individual postgres instances are defined after the stanza name. For example
+
+ - **pg2-host** Is the name or ip of the 2nd postgres instance
+-  **pg2-port** is the port used by the pg2 host
+ - **pg2-path** is the data directory used by pg2
+ 
+The same would apply to other hosts groups like pg1 and pg3
+
+**A little cleanup**
+
+Since the default pgbackrest configuration file is in /etcd/ and we are configuring our environment to use a centralized location for configuration located in **/pgha/config** ,  we will need to make a few minor changes.
+
+As user **root**
+
+    cd /etc
+    mv pgbackrest.conf  pgbackrest.conf.save
+    ln -s /pgha/config/pgbackrest.conf pgbackrest.conf
+
+In the future, I will include  this as part of the Docker image. But for now, I just want to get this tutorial done.
+
+Back as user **postgres** again
+
+    sudo -E -u postgres /bin/bash -l
+   
+### Create pgbackrest.conf on database servers
+
+On pgha1 as user postgres
+
+    vi /pgha/config/pgbackrest.conf
+
+Add the following to it's content and save.
+
+    [global]
+    
+    repo1-host=pgbackrest1
+    repo1-host-user=postgres
+    
+    process-max=4
+    log-level-console=info
+    log-level-file=debug
+    
+    [pgha]
+    
+    pg1-path=/pgdata/17/data
+
+Save the above and propagate to the additional database servers
+
+    scp pgbackrest.conf pgha2:/pgha/config/
+    scp pgbackrest.conf pgha3:/pgha/config/
+
+### Additional cleanup
+
+Once again, lets change the file locations and privileges.  **We must do this on all the database servers as user root**
+
+    cd /etc
+    mv pgbackrest.conf  pgbackrest.conf.save
+    ln -s /pgha/config/pgbackrest.conf pgbackrest.conf
+
+
+### Create the stanza
+
+Back on the pgbackrest1 server ( repo server )
+
+    pgbackrest --stanza=pgha stanza-create
+    
+    2025-11-19 22:02:39.670 P00   INFO: stanza-create command begin 2.57.0: --exec-id=504-dd04aa73 --log-level-console=info --log-level-file=info --pg1-host=pgha1 --pg2-host=pgha2 --pg3-host=pgha3 --pg1-path=/pgdata/17/data --pg2-path=/pgdata/17/data --pg3-path=/pgdata/17/data --pg1-port=5432 --pg2-port=5432 --pg3-port=5432 --repo1-path=/pgha/data/pgbackrest --stanza=pgha
+    2025-11-19 22:02:40.004 P00   INFO: stanza-create for stanza 'pgha' on repo1
+    2025-11-19 22:02:40.383 P00   INFO: stanza-create command end: completed successfully (715ms)
+
+
+At this point, we only created the stanza. We still have not configured our database servers. 
+
+    pgbackrest --stanza=pgha info
+    
+    stanza: pgha
+        status: error (no valid backups)
+        cipher: none
+    
+        db (current)
+            wal archive min/max (17): none present
+
+
+
+### Update postgres config using patronictl to use pgbackrest
+
+On pgha1 as user postgres 
+
+     patronictl -c /pgha/config/patroni.yaml edit-config
+
+**Make the changes to archive _command as shown below**
+
+    loop_wait: 10
+    maximum_lag_on_failover: 1048576
+    postgresql:
+      parameters:
+        archive_command: pgbackrest --stanza=pgha archive-push "/pgdata/17/data/pg_wal/%f"
+        archive_mode: true
+        archive_timeout: 600s
+        hot_standby: true
+        log_filename: postgresql-%a.log
+        log_line_prefix: '%m [%r] [%p]: [%l-1] user=%u,db=%d,host=%h '
+        log_lock_waits: 'on'
+        log_min_duration_statement: 500
+        logging_collector: 'on'
+        max_replication_slots: 10
+        max_wal_senders: 10
+        max_wal_size: 1GB
+        wal_keep_size: 4096
+        wal_level: logical
+        wal_log_hints: true
+      pg_hba:
+      - local all all trust
+      - host all all 127.0.0.1/32 trust
+      - host replication replicator 127.0.0.1/32 trust
+      - host replication replicator 0.0.0.0/0 md5
+      - host all postgres 192.168.50.0/24 md5
+      use_pg_rewind: true
+      use_slots: true
+    retry_timeout: 10
+    ttl: 30
+
+
+Once you made the changes, validate things are working as expected.
+
+You can do this several ways. 
+
+Identify the lates log file
+
+    cd $PGDATA
+    cd log
+    ls -lrt
+
+From the list shown,  it's postgresql-Fri.log
+
+    -rw------- 1 postgres postgres 36467 Nov 17 23:59 postgresql-Mon.log
+    -rw------- 1 postgres postgres  5208 Nov 18 07:03 postgresql-Tue.log
+    -rw------- 1 postgres postgres 14226 Nov 19 22:42 postgresql-Wed.log
+    -rw------- 1 postgres postgres 27208 Nov 20 21:17 postgresql-Thu.log
+    -rw------- 1 postgres postgres  7671 Nov 21 06:07 postgresql-Fri.log
+
+So the rest is simple. Lets force a WAL archive, get the time so we can then see the entry in the log file around the time shown.
+
+    psql -c "select pg_switch_wal(); select now()"
+    
+     pg_switch_wal
+    ---------------
+     0/30000180
+    (1 row)
+    
+                  now
+    -------------------------------
+     2025-11-21 06:08:43.687362+00
+    (1 row)
+
+Now tail the log file and look at the end. You should see archive-push log entry with a timestamp close to the one extracted in the sql above.
+
+    tail postgresql-Fri.log
+    
+    2025-11-21 06:04:21.701 P00   INFO: pushed WAL file '00000008000000000000002E' to the archive
+    2025-11-21 06:04:21.801 P00   INFO: archive-push command end: completed successfully (309ms)
+    2025-11-21 06:05:24.885 P00   INFO: archive-push command begin 2.57.0: [/pgdata/17/data/pg_wal/00000008000000000000002F] --exec-id=4838-684c9b79 --log-level-console=info --log-level-file=debug --pg1-path=/pgdata/17/data --process-max=4 --repo1-host=pgbackrest1 --repo1-host-user=postgres --stanza=pgha
+    2025-11-21 06:05:25.098 P00   INFO: pushed WAL file '00000008000000000000002F' to the archive
+    2025-11-21 06:05:25.198 P00   INFO: archive-push command end: completed successfully (314ms)
+    2025-11-21 06:07:02.088 UTC [] [4798]: [1-1] user=,db=,host= LOG:  checkpoint starting: time
+    2025-11-21 06:07:02.140 UTC [] [4798]: [2-1] user=,db=,host= LOG:  checkpoint complete: wrote 3 buffers (0.0%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.004 s, sync=0.002 s, total=0.053 s; sync files=2, longest=0.001 s, average=0.001 s; distance=49152 kB, estimate=49152 kB; lsn=0/300000B8, redo lsn=0/30000060
+    2025-11-21 06:08:43.703 P00   INFO: archive-push command begin 2.57.0: [/pgdata/17/data/pg_wal/000000080000000000000030] --exec-id=4851-4ff4f1f9 --log-level-console=info --log-level-file=debug --pg1-path=/pgdata/17/data --process-max=4 --repo1-host=pgbackrest1 --repo1-host-user=postgres --stanza=pgha
+    2025-11-21 06:08:43.916 P00   INFO: pushed WAL file '000000080000000000000030' to the archive
+    2025-11-21 06:08:44.016 P00   INFO: archive-push command end: completed successfully (315ms)
+
+
+You could also do the following.
+
+     psql -c "SELECT * FROM pg_stat_archiver;"
+     
+     archived_count |    last_archived_wal     |      last_archived_time       | failed_count |     last_failed_wal      |       last_failed_time        |          stats_reset
+    ----------------+--------------------------+-------------------------------+--------------+--------------------------+-------------------------------+-------------------------------
+                 41 | 000000080000000000000030 | 2025-11-21 06:08:44.017249+00 |            6 | 000000080000000000000024 | 2025-11-20 20:26:46.658215+00 | 2025-11-17 23:59:17.537165+00
+    (1 row)
+
+Take note of the archived_count
+
+     psql -c "SELECT pg_switch_wal()"
+     
+     pg_switch_wal
+    ---------------
+     0/31000180
+    (1 row)
+
+After forcing another WAL switch, see what the new archived_count is
+
+    psql -c "SELECT * FROM pg_stat_archiver;"
+    
+     archived_count |    last_archived_wal     |      last_archived_time       | failed_count |     last_failed_wal      |       last_failed_time        |          stats_reset
+    ----------------+--------------------------+-------------------------------+--------------+--------------------------+-------------------------------+-------------------------------
+                 42 | 000000080000000000000031 | 2025-11-21 06:13:06.068236+00 |            6 | 000000080000000000000024 | 2025-11-20 20:26:46.658215+00 | 2025-11-17 23:59:17.537165+00
+    (1 row)
+
+
+### Create a backup
+
+Backups need to be started on the repo server ( pgbackrest1 ) as user postgres. We can log on to pgbackres1 or, since we have trusted ssh connection for user postgres across our environment, we could also simply run an ssh command.
+
+    ssh pgbackrest1 "pgbackrest  --stanza=pgha --type=full backup"
+
+This should kick off a full backup
+
+    2025-11-21 06:37:27.552 P00   INFO: backup command begin 2.57.0: --backup-standby=y --delta --exec-id=1062-b359b7a5 --log-level-console=info --log-level-file=info --pg1-host=pgha1 --pg2-host=pgha2 --pg3-host=pgha3 --pg1-host-user=postgres --pg2-host-user=postgres --pg3-host-user=postgres --pg1-path=/pgdata/17/data --pg2-path=/pgdata/17/data --pg3-path=/pgdata/17/data --pg1-port=5432 --pg2-port=5432 --pg3-port=5432 --process-max=2 --repo1-path=/pgha/data/pgbackrest --repo1-retention-archive-type=full --repo1-retention-full=2 --stanza=pgha --start-fast --type=full
+    2025-11-21 06:37:27.958 P00   INFO: execute non-exclusive backup start: backup begins after the requested immediate checkpoint completes
+    2025-11-21 06:37:28.030 P00   INFO: backup start archive = 000000080000000000000036, lsn = 0/36000028
+    2025-11-21 06:37:28.030 P00   INFO: wait for replay on the standby to reach 0/36000028
+    2025-11-21 06:37:28.183 P00   INFO: replay on the standby reached 0/36000028
+    2025-11-21 06:37:28.183 P00   INFO: check archive for segment 000000080000000000000036
+    2025-11-21 06:37:32.065 P00   INFO: execute non-exclusive backup stop and wait for all WAL segments to archive
+    2025-11-21 06:37:32.080 P00   INFO: backup stop archive = 000000080000000000000037, lsn = 0/37000088
+    2025-11-21 06:37:32.103 P00   INFO: check archive for segment(s) 000000080000000000000036:000000080000000000000037
+    2025-11-21 06:37:32.513 P00   INFO: new backup label = 20251121-063727F
+    2025-11-21 06:37:32.555 P00   INFO: full backup size = 64.1MB, file total = 1279
+    2025-11-21 06:37:32.555 P00   INFO: backup command end: completed successfully (5004ms)
+    2025-11-21 06:37:32.555 P00   INFO: expire command begin 2.57.0: --exec-id=1062-b359b7a5 --log-level-console=info --log-level-file=info --repo1-path=/pgha/data/pgbackrest --repo1-retention-archive-type=full --repo1-retention-full=2 --stanza=pgha
+    2025-11-21 06:37:32.656 P00   INFO: expire command end: completed successfully (101ms)
+
+ 
+We can now check our repo status for backups with the **info** flag
+
+    ssh pgbackrest1 "pgbackrest  --stanza=pgha info"
+    
+    stanza: pgha
+        status: ok
+        cipher: none
+    
+        db (current)
+            wal archive min/max (17): 000000080000000000000036/000000080000000000000037
+    
+            full backup: 20251121-063727F
+                timestamp start/stop: 2025-11-21 06:37:27+00 / 2025-11-21 06:37:32+00
+                wal start/stop: 000000080000000000000036 / 000000080000000000000037
+                database size: 64.1MB, database backup size: 64.1MB
+                repo1: backup set size: 7.8MB, backup size: 7.8MB
+
+
+
+
+### pgBackrest Online Documentation
+
+https://pgbackrest.org/user-guide.html
 
