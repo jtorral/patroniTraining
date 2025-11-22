@@ -71,6 +71,8 @@ bootstrap:
 
     pg_hba: # Add the following lines to pg_hba.conf after running 'initdb'
         - local all all trust
+        - host all postgres 127.0.0.1/32 trust
+        - host all postgres 0.0.0.0/0 md5
         - host replication replicator 127.0.0.1/32 trust
         - host replication replicator 0.0.0.0/0 md5
 

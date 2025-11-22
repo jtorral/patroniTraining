@@ -1,13 +1,12 @@
-
 ## Table of Contents
 
-- [Postgres High Availability with Patroni Training](#postgres-high-availability-with-patroni-training)
+- [Deploying and Securing High Availability Postgres with Patroni and pgBackrest](#deploying-and-securing-high-availability-postgres-with-patroni-and-pgbackrest)
   - [License and Credit](#license-and-credit)
   - [Support Our Work](#support-our-work)
   - [About this tutorial](#about-this-tutorial)
 - [Lets get this out of the way first!](#lets-get-this-out-of-the-way-first)
+    - [Don't skip this section. Even if you think you already know about quorums and etcd!](#don-t-skip-this-section-even-if-you-think-you-already-know-about-quorums-and-etcd)
   - [The etcd Mystery and Critical Misconception. Your etcd Quorum](#the-etcd-mystery-and-critical-misconception-your-etcd-quorum)
-    - [Don't skip this section. Even if you think you already know about quorums.](#don-t-skip-this-section-even-if-you-think-you-already-know-about-quorums)
   - [Why Your Patroni Node Count Doesn't Determine Your etcd Quorum](#why-your-patroni-node-count-doesn-t-determine-your-etcd-quorum)
   - [The Correct etcd Quorum Sizing Rule](#the-correct-etcd-quorum-sizing-rule)
   - [A word about our deployment for this tutorial.](#a-word-about-our-deployment-for-this-tutorial)
@@ -24,7 +23,7 @@
     - [Start the containers](#start-the-containers)
     - [Naming convention](#naming-convention)
     - [Hostname Options](#hostname-options)
-  - [Create the aliases ( Optional for this tutorial )](#create-the-aliases-optional-for-this-tutorial)
+  - [Create the aliases](#create-the-aliases)
     - [As the user root](#as-the-user-root)
   - [setup logging folders and permissions.](#setup-logging-folders-and-permissions)
   - [Create etcd configuration files](#create-etcd-configuration-files)
@@ -49,7 +48,7 @@
   - [Start patroni manually in the background](#start-patroni-manually-in-the-background)
     - [Start patroni on the remaining nodes 1 at a time.](#start-patroni-on-the-remaining-nodes-1-at-a-time)
   - [Some patroni administrative tasks](#some-patroni-administrative-tasks)
-    - [Adjusting pg_hba.conf](#adjusting-pg-hba-conf)
+    - [Change a postgres setting with patronictl](#change-a-postgres-setting-with-patronictl)
     - [patronictl  (Failove vs Switchover)](#patronictl-failove-vs-switchover)
       - [Failover](#failover)
       - [Switchover](#switchover)
@@ -57,27 +56,25 @@
       - [Running patronictl with switchover](#running-patronictl-with-switchover)
   - [Load balancing on using psql](#load-balancing-on-using-psql)
     - [Connection String Load Balancing Parameters](#connection-string-load-balancing-parameters)
-  - [Backup solution with pgBackrest](#backup-solution-with-pgbackrest)
-    - [What is pgBackRest?](#what-is-pgbackrest)
-    - [Creae a backup server](#creae-a-backup-server)
-    - [Configure backup server](#configure-backup-server)
+  - [What is pgBackRest?](#what-is-pgbackrest)
+  - [pgbackrest setup](#pgbackrest-setup)
+    - [Create a backup server](#create-a-backup-server)
     - [Create pgbackrest.conf](#create-pgbackrest-conf)
-    - [Explanation](#explanation)
+    - [Explanation of the settings](#explanation-of-the-settings)
     - [Create pgbackrest.conf on database servers](#create-pgbackrest-conf-on-database-servers)
-    - [Additional cleanup](#additional-cleanup)
     - [Create the stanza](#create-the-stanza)
     - [Update postgres config using patronictl to use pgbackrest](#update-postgres-config-using-patronictl-to-use-pgbackrest)
     - [Create a backup](#create-a-backup)
     - [pgBackrest Online Documentation](#pgbackrest-online-documentation)
+  - [More to come ...](#more-to-come)
 
 
-# Postgres High Availability with Patroni Training
+
+# Deploying and Securing High Availability Postgres with Patroni and pgBackrest
 
 Welcome to this free, self paced training documentation offered by Postgres Solutions! This comprehensive material is designed to guide you through the critical concepts and practical implementation of running a highly available database cluster using Postgres, orchestrated by Patroni, and leveraging etcd for distributed consensus.
 
 We aim to break down complex topics, clarify common pitfalls (like quorum sizing), and provide step by step instructions to build a resilient system.
-
-**Additionally, an added bonus of setting up pgbackrest for backups and recovery will be included.**
 
 ## License and Credit
 
@@ -94,21 +91,18 @@ https://www.paypal.com/donate/?hosted_button_id=J2HWPPWX8EBNC
 
 If you're reading this or expressing an interest in this topic, you are likely already familiar with Patroni. This powerful tool elegantly solves the problem of high availability for Postgres by orchestrating replication, failover, and self healing. Patroni's primary function is to turn a collection of standard Postgres instances into a robust, resilient cluster.
 
-This tutorial is designed not only to guide you through setting up a highly available Postgres cluster with Patroni, but also to equip you with the fundamental concepts needed to avoid the critical pitfalls that plague many production deployments. 
+This comprehensive tutorial guides you through setting up a highly available (HA) Postgres cluster using Patroni. You'll not only learn the practical steps but also gain the fundamental concepts required to avoid common pitfalls in production deployments. We'll also integrate pgBackrest to ensure you have a robust, reliable backup and recovery strategy because high availability is incomplete without reliable data protection.
 
-To focus purely on the architecture and consensus mechanics without complex installation steps, we will be leveraging Docker containers. These containers conveniently include Postgres, Patroni, and etcd with many necessary dependencies pre-configured. We will carefully walk through the configuration and setup process, ensuring you gain a complete and clear understanding of how these components interact and how to properly secure your critical quorum for true high availability.
+To focus purely on the architecture and consensus mechanics without complex installation steps, we will be leveraging Docker containers. These containers conveniently include Postgres, Patroni, and etcd with many necessary dependencies pre configured. We will carefully walk through the configuration and setup process, ensuring you gain a complete and clear understanding of how these components interact and how to properly secure your critical quorum for true high availability.
 
-## A late night added bonus of pgbackrest. Please read this.
-
-This document was originally created without the intention of using pgbackrest. Therefore, the configuration outlined does not include the pgbackrest setup and configuration as if we had planned for it. Instead, pgbackrest is treated as an afterthought and the process details how to setup and configure pgbackrest after we have already established our HA environment.  This is actually a good thing as it walks you through a common scenario. 
-
-I will eventually, create a 2nd set of docs where it is treated as part of the original plan and link to it form here.
 
 # Lets get this out of the way first!
 
-## The etcd Mystery and Critical Misconception. Your etcd Quorum
+**While etcd serves as the primary Distributed Consensus Store (DCS) for Patroni, its deployment is frequently misconfigured. I've observed numerous deployments where administrators run etcd directly alongside the Postgres database instance. This common setup leads to a false sense of security, as it demonstrates a fundamental misunderstanding of quorum and eliminates the failover protection that a DCS is meant to provide.**
 
-### Don't skip this section. Even if you think you already know about quorums.
+### Don't skip this section. Even if you think you already know about quorums and etcd!
+
+## The etcd Mystery and Critical Misconception. Your etcd Quorum
 
 There is a fundamental part of the Patroni architecture that is often **grossly** **overlooked** or **misunderstood**, the role and sizing of the Distributed Consensus Store. In the context of Patroni, this is typically etcd.
 
@@ -170,7 +164,7 @@ Lets break it down.
 - Lastly,  5 nodes needed minus the original 3 nodes, means **you need an extra 2 etcd nodes**. The original 3 on each database server, plus two additional stand alone etcd nodes.
 
 
-***With that said, our tutorial and examples used throughout this documentation will be based on 3 postgres servers running etcd and 2 additional etcd servers to make up the needed difference.*** 
+**With that said, our tutorial and examples used throughout this documentation will be based on 3 postgres servers running etcd and 2 additional etcd servers to make up the needed difference.** 
 
 
 ## A word about our deployment for this tutorial.
@@ -359,8 +353,9 @@ You have flexibility in how you refer to your nodes within configuration files.
 
 
 
-## Create the aliases ( Optional for this tutorial )
-***This is optional as we will be using the host names for the etcd and patroni configurations.  It is included here solely to provide you with a complete understanding of the underlying setup processes.***
+## Create the aliases
+
+Even though we wont be using the etcd aliases for our config, we will be using the pgbackrest1 alias for our pgbackrest server. With thatsaid, lets make the necessary changes to /etc/hosts
 
 ### As the user root
 
@@ -370,7 +365,7 @@ To create the aliases so we can reference the nodes by the names etcd1, etcd2 ..
     192.168.50.11   pgha2 etcd2
     192.168.50.12   pgha3 etcd3
     192.168.50.13   pgha4 etcd4
-    192.168.50.14   pgha5 etcd5
+    192.168.50.14   pgha5 etcd5 pgbackrest1
 
 Simply remove any reference to the host name in /etc/hosts that already exists in the list above then add the above entries. Do this on all containers.
 
@@ -387,7 +382,19 @@ The /etc/hosts file should look like this:
     192.168.50.11   pgha2 etcd2
     192.168.50.12   pgha3 etcd3
     192.168.50.13   pgha4 etcd4
-    192.168.50.14   pgha5 etcd5
+    192.168.50.14   pgha5 etcd5 pgbackrest1
+
+Now copy the file to the other servers
+
+    scp /etc/hosts pgha2:/etc/
+    scp /etc/hosts pgha3:/etc/
+    scp /etc/hosts pgha4:/etc/
+    scp /etc/hosts pgha5:/etc/
+
+At this point we should now be able to access the servers using the aliases and not just the host names. 
+
+Keep in mind, this was all optional incase you want to setup etcd and pgBackrest for access using a more descriptive name.
+
 
 ## setup logging folders and permissions.
 ***This is optional as it has already been configured as part of the rocky9-pg17-bundle Docker image. It is included here solely to provide you with a complete understanding of the underlying setup processes.***
@@ -440,9 +447,29 @@ This will output something similar to the following
     
             export ENDPOINTS="pgha1:2380,pgha2:2380,pgha3:2380,pgha4:2380,pgha5:2380"
 
+If you wanted to create the etcd config using the aliases we added to the /etc/hosts file you would add the -e flag to the etcdSetup script.
+
+     /etcdSetup.sh -y -e
+
+Which would generate the following config file instead.
+
+    name: etcd1
+    initial-cluster: "etcd1=http://192.168.50.10:2380,etcd2=http://192.168.50.11:2380,etcd3=http://192.168.50.12:2380,etcd4=http://192.168.50.13:2380,etcd5=http://192.168.50.14:2380"
+    initial-cluster-token: pgha-token
+    data-dir: /pgha/data/etcd
+    initial-cluster-state: new
+    initial-advertise-peer-urls: "http://192.168.50.10:2380"
+    listen-peer-urls: "http://192.168.50.10:2380"
+    listen-client-urls: "http://192.168.50.10:2379,http://localhost:2379"
+    advertise-client-urls: "http://192.168.50.10:2379"
+
+Notice how it is now using the name etcd1 ... etcd5 instead of the actual host name of pgha1 ... pgha5
+
 **Take note of the export command at the end. Copy and run it now or add it to the  profile .pgsql_profile file.**
 
 The output above also shows the content of the **/pgha/config/etcd.yaml**  generated.
+
+**Moving forward, we will be using the regular hostname for our configuration.**
 
 **Take note of the above etcd.yaml file. If you do not use the script, you would have to create the above file on each of the nodes in the cluster and make the changes to reflect the proper hostname and ip address of the node. This is why using the file makes deployment easier**
 
@@ -587,6 +614,7 @@ Remember, when you ran etcdSetup.sh, it should have been generated an output wit
 Check the etcd status
 
     etcdctl --write-out=table --endpoints=$ENDPOINTS endpoint status
+    
     +------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
     |  ENDPOINT  |        ID        | VERSION | DB SIZE | IS LEADER | IS LEARNER | RAFT TERM | RAFT INDEX | RAFT APPLIED INDEX | ERRORS |
     +------------+------------------+---------+---------+-----------+------------+-----------+------------+--------------------+--------+
@@ -653,7 +681,7 @@ The above command created the configuration file /pgha/config/patroni.yaml.
 
     namespace: pgha
     scope: pgha_patroni_cluster
-    name: pgha1
+    name: pgha2
     
     log:
       dir: /var/log/patroni
@@ -664,7 +692,7 @@ The above command created the configuration file /pgha/config/patroni.yaml.
     
     restapi:
         listen: 0.0.0.0:8008
-        connect_address: pgha1:8008
+        connect_address: pgha2:8008
     
     etcd3:
         hosts: pgha1:2379,pgha2:2379,pgha3:2379,pgha4:2379,pgha5:2379
@@ -708,6 +736,8 @@ The above command created the configuration file /pgha/config/patroni.yaml.
     
         pg_hba: # Add the following lines to pg_hba.conf after running 'initdb'
             - local all all trust
+            - host all postgres 127.0.0.1/32 trust
+            - host all postgres 0.0.0.0/0 md5
             - host replication replicator 127.0.0.1/32 trust
             - host replication replicator 0.0.0.0/0 md5
     
@@ -716,7 +746,7 @@ The above command created the configuration file /pgha/config/patroni.yaml.
     postgresql:
         cluster_name: pgha_patroni_cluster
         listen: 0.0.0.0:5432
-        connect_address: pgha1:5432
+        connect_address: pgha2:5432
         data_dir: /pgdata/17/data
         bin_dir: /usr/pgsql-17/bin/
         pgpass: /pgha/config/pgpass
@@ -754,6 +784,8 @@ The above command created the configuration file /pgha/config/patroni.yaml.
         noloadbalance: false
         clonefrom: false
         nosync: false
+
+
 
 ## Lets breakdown the config file for some basic explanation
 
@@ -853,7 +885,7 @@ If set to true, this node will not be considered for synchronous replication.
 
 ## Start patroni manually in the background
 
-    nohup patroni /pgha/config/patroni.yaml > patroni.log 2>&1 &
+    patroni /pgha/config/patroni.yaml >> /var/log/patroni/patroni.log 2>&1 &
 
 Validate patroni is running using patronictl
 
@@ -900,7 +932,7 @@ If it worked, you should see the message
 
 Now lets start it from ssh as well.
 
-    ssh pgha2 "nohup patroni /pgha/config/patroni.yaml > patroni.log 2>&1 &"
+    ssh pgha2 "patroni /pgha/config/patroni.yaml >> /var/log/patroni/patroni.log 2>&1 &"
 
 Validate it was added to the patroni cluster.  Again, we use patronictl. We can do this from any of the servers in our cluster.
 
@@ -956,60 +988,33 @@ As you can see, we now have all 3 postgres database servers running and managed 
 ## Some patroni administrative tasks
 
 
-For the purposes of this tutorial, we have purposely omitted the necessary entry for the highly privileged postgres superuser from the pg_hba.conf file in our Patroni cluster's dynamic configuration.
+Utilizing patroni for HA requires relinquishing direct control over local postgres configuration files. This architectural choice represents a fundamental shift in operations, committing you to patroni's control plane. This process necessitates interacting with the cluster via the patroni utility (patronictl) to modify parameters like those in postgresql.conf or pg_hba.conf. 
 
-This omission is deliberate, as it allows us to successfully demonstrate and practice the correct,  method for modifying pg_hba.conf entries in a Patroni managed environment by using the **patronictl edit-config** command.
-
-Managing this configuration through patronictl ensures the changes are centrally stored in the DCS (Distributed Configuration Store) and automatically propagated to all Primary and Replica nodes, maintaining cluster consistency.
+While this new management layer introduces an initial learning curve and can feel restrictive compared to traditional manual editing, it is the essential mechanism that ensures configuration integrity and state enforcement across all nodes in the HA cluster.
 
 
 **Personal Side Note:** 
 
-***While Patroni is an absolutely awesome high availability tool, its architecture, which involves taking over almost all Postgres administrative and configuration tasks, can sometimes feel overwhelming for newcomers. For those seeking similar high-availability functionality like connection pooling, load balancing, and replication management without Patroni's deep integration and complexity, I personally lean towards pgpool. pgpool sits between the client and Postgres, offering powerful features without completely taking over the underlying database administration. I will be publishing a pgpool tutorial as well***
+***While Patroni is an absolutely awesome high availability tool, its architecture, which involves taking over almost all Postgres administrative and configuration tasks, can sometimes feel overwhelming for newcomers. For those seeking similar high availability functionality including connection pooling, load balancing, and replication management without Patroni's deep integration and complexity, I personally lean towards pgpool. pgpool sits between the client and Postgres, offering powerful features without completely taking over the underlying database administration. I will be publishing a pgpool tutorial as well***
 
 
-### Adjusting pg_hba.conf
+### Change a postgres setting with patronictl
 
-As you can see, if I try to psql directly to phga2 from pgha1, I receive the following error.
+Our deploy, is using the default value of 128MB for shared_buffers.
 
-
-    psql -h pgha2
+    psql -c "show shared_buffers"
     
-    psql: error: connection to server at "pgha2" (192.168.50.11), port 5432 failed: FATAL:  no pg_hba.conf entry for host "192.168.50.10", user "postgres", database "postgres", no encryption
+     shared_buffers
+    ----------------
+     128MB
+    (1 row)
 
-This is a very typical and easy to resolve issue by editing the pg_hba.conf file and reloading postgres. However, with patroni taking over all aspects of managing postgres, we should never directly make changes to postgres confion or runtime parameters as you normally would.  You need to perform the change using the Patroni control utility, patronictl edit-config, to ensure the rule is stored in the DCS and automatically propagated to all nodes in the cluster.
+If we wanted to change shared_buffers to 256MB we would have to run:
 
+     patronictl -c /pgha/config/patroni.yaml edit-config
 
-
-    patronictl -c /pgha/config/patroni.yaml edit-config
-
-Opens up your editor with the following file in yaml format
-
-    loop_wait: 10
-    maximum_lag_on_failover: 1048576
-    postgresql:
-      parameters:
-        archive_command: /bin/true
-        archive_mode: true
-        archive_timeout: 600s
-        hot_standby: true
-        log_filename: postgresql-%a.log
-        log_line_prefix: '%m [%r] [%p]: [%l-1] user=%u,db=%d,host=%h '
-        log_lock_waits: 'on'
-        log_min_duration_statement: 500
-        logging_collector: 'on'
-        max_replication_slots: 10
-        max_wal_senders: 10
-        max_wal_size: 1GB
-        wal_keep_size: 4096
-        wal_level: logical
-        wal_log_hints: true
-      use_pg_rewind: true
-      use_slots: true
-    retry_timeout: 10
-    ttl: 30
-
-Make the necessary changes to include the pg_hba.conf setting.
+Which would then open up the editor with the current configuration as stored in the DCS as you can see below.
+Add the entry for **shared_buffers: 256MB**, save and confirm the changes when prompted.
 
     loop_wait: 10
     maximum_lag_on_failover: 1048576
@@ -1027,70 +1032,78 @@ Make the necessary changes to include the pg_hba.conf setting.
         max_replication_slots: 10
         max_wal_senders: 10
         max_wal_size: 1GB
+        shared_buffers: 256MB
         wal_keep_size: 4096
         wal_level: logical
         wal_log_hints: true
       pg_hba:
-      - host all postgres 192.168.50.0/24 md5
+      - host all bubba 0.0.0.0/0 md5
+      - local all all trust
+      - host all postgres 127.0.0.1/32 trust
+      - host all postgres 0.0.0.0/0 md5
+      - host replication replicator 127.0.0.1/32 trust
+      - host replication replicator 0.0.0.0/0 md5
       use_pg_rewind: true
       use_slots: true
     retry_timeout: 10
     ttl: 30
 
-You will be asked to confirm the changes. 
+Once the above has been saved and confirmed, it will be propagated to the other nodes.  And as you may already know, a change to **shared_buffers** requires a restart.
 
-Once confirmed, Patroni will propagate the changes to the other nodes in the cluster. And once it does, we should be good to go.
+Lets see the status of the cluster after making the change.
 
-    [postgres@pgha1 data]$ psql -h pgha2
-    psql (17.6)
-    Type "help" for help.
+    patronictl -c /pgha/config/patroni.yaml list
     
-    postgres=#
+    + Cluster: pgha_patroni_cluster (7575415324175827441) ----+-----+------------+-----+-----------------+------------------------------+
+    | Member |  Host |   Role  |   State   | TL | Receive LSN | Lag | Replay LSN | Lag | Pending restart |    Pending restart reason    |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+-----------------+------------------------------+
+    | pgha1  | pgha1 | Leader  | running   |  4 |             |     |            |     | *               | shared_buffers: 128MB->256MB |
+    | pgha2  | pgha2 | Replica | streaming |  4 |   0/8000168 |   0 |  0/8000168 |   0 | *               | shared_buffers: 128MB->256MB |
+    | pgha3  | pgha3 | Replica | streaming |  4 |   0/8000168 |   0 |  0/8000168 |   0 | *               | shared_buffers: 128MB->256MB |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+-----------------+------------------------------+
 
-Now we can do a simple test to see replication working.
+As you can see, it is advising the changes are waiting for a restart before they take effect. 
 
-First query pgha1. The primary.
+This is how we restart the cluster.
 
-    psql -h pgha1 -c "select datname from pg_stat_database"
-      datname
-    -----------
+
+    patronictl -c /pgha/config/patroni.yaml restart pgha_patroni_cluster
     
-     postgres
-     template1
-     template0
-    (4 rows)
-
-Now query one of the replicas, pgha2
-
-    psql -h pgha2 -c "select datname from pg_stat_database"
-      datname
-    -----------
+    + Cluster: pgha_patroni_cluster (7575415324175827441) ----+-----+------------+-----+-----------------+------------------------------+
+    | Member |  Host |   Role  |   State   | TL | Receive LSN | Lag | Replay LSN | Lag | Pending restart |    Pending restart reason    |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+-----------------+------------------------------+
+    | pgha1  | pgha1 | Leader  | running   |  4 |             |     |            |     | *               | shared_buffers: 128MB->256MB |
+    | pgha2  | pgha2 | Replica | streaming |  4 |   0/8000168 |   0 |  0/8000168 |   0 | *               | shared_buffers: 128MB->256MB |
+    | pgha3  | pgha3 | Replica | streaming |  4 |   0/8000168 |   0 |  0/8000168 |   0 | *               | shared_buffers: 128MB->256MB |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+-----------------+------------------------------+
     
-     postgres
-     template1
-     template0
-    (4 rows)
+    When should the restart take place (e.g. 2025-11-22T06:46)  [now]:
+    Are you sure you want to restart members pgha1, pgha2, pgha3? [y/N]: y
+    Restart if the PostgreSQL version is less than provided (e.g. 9.5.2)  []:
+    Success: restart on member pgha1
+    Success: restart on member pgha2
+    Success: restart on member pgha3
 
-As you can see, they both have the same databases. Nothing has been created on the primary yet.
+Another list, shows us we are good.
 
-Now, lets create a new database on the primary.
+     patronictl -c /pgha/config/patroni.yaml list
+     
+    + Cluster: pgha_patroni_cluster (7575415324175827441) ----+-----+------------+-----+
+    | Member |  Host |   Role  |   State   | TL | Receive LSN | Lag | Replay LSN | Lag |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
+    | pgha1  | pgha1 | Leader  | running   |  4 |             |     |            |     |
+    | pgha2  | pgha2 | Replica | streaming |  4 |   0/9000ED8 |   0 |  0/9000ED8 |   0 |
+    | pgha3  | pgha3 | Replica | streaming |  4 |   0/9000ED8 |   0 |  0/9000ED8 |   0 |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
 
-    psql -h pgha1 -c "create database foobar"
-    CREATE DATABASE
+And we can now see the change has been applied.
 
-Now lets see if it was replicated to pgha2
-
-     psql -h pgha2 -c "select datname from pg_stat_database"
-      datname
-    -----------
-    
-     postgres
-     foobar
-     template1
-     template0
-    (5 rows)
- 
- As you can see it has been replicated.
+     psql -c "show shared_buffers"
+     
+     shared_buffers
+    ----------------
+     256MB
+    (1 row)
 
 
 ### patronictl  (Failove vs Switchover)
@@ -1308,11 +1321,8 @@ And another selection
     (1 row)
 
 
-## Backup solution with pgBackrest
 
-Well, this is an added bonus to this free self paced tutorial I am publishing.  Why not include pgBackrest since it's included in the Docker image.
-
-### What is pgBackRest?
+## What is pgBackRest?
 
 pgBackrest is a backup and restore utility designed specifically for Postgres. Unlike generic file system backup tools, pgBackrest is postgres aware. It understands the database's architecture, including its WAL, which allows it to perform non disruptive, consistent backups and, crucially, enable Point In Time Recovery (PITR).
 
@@ -1328,55 +1338,21 @@ We will configure the postgres via patroni to use pgbackrests's archive push com
 
 By centralizing the repository on a dedicated server, we isolate the backups from potential failures of the database cluster nodes, creating a resilient and scalable disaster recovery solution.
 
+## pgbackrest setup
+
+This docker image has been configured to setup the necessary directories and file permissions needed for configuring pgBackrest and other services. Therefore, we will skip some of the tedious setup tasks.  These steps will be added later to the tutorial for a better understanding.
+
 With all that out of the way, lets start.
 
-### Creae a backup server
+### Create a backup server
 
-Once again we will use genDeploy for this as it makes creating Docker containers much easier.
+Since we already have two extra nodes on our cluster for etcd, we will use one of those nodes for the pgbackrest repo host.  At the beginning of this tutorial,  we configured the /etc/hosts file to use the alias pgbackrest1 with the host pgha5.  With that in mind,  pgha5 will be the server we will run pgbackrest on and there is no need to create an extra pgbackrest repo server.
 
-     ./genDeploy -c pgbackrest -w pghanet -n 1 -i rocky9-pg17-bundle
-    
-            The following docker deploy utility manager file: DockerRunThis.pgbackrest has been created. To manage your new deploy run the file "./DockerRunThis.pgbackrest"
-
-This time our structure is much more simple.
-
-We simply just specify a container name, the number of containers and an existing network. By attaching it to the same network, we have full access to it. 
-
-We then simply create the container and start it.
-
-
-    ./DockerRunThis.pgbackrest create
-    Using existing network pghanet No need to create the network at this time.
-    c3ff6cbda7f7f3ec59c32630781d1014762a3257833b9e829e38c8a71bcce8c7
-    
-    ./DockerRunThis.pgbackrest start
-    Starting containers  pgbackrest1
-    pgbackrest1
-
-That's it. We now have our pgbackrest1 container up and running on the same network as our other containers. 
-
-    docker ps | grep pgbackrest
-    c3ff6cbda7f7   rocky9-pg17-bundle   "/bin/bash -c /entry…"   5 minutes ago   Up 5 minutes   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6438->5432/tcp, [::]:6438->5432/tcp, 0.0.0.0:9998->9999/tcp, [::]:9998->9999/tcp   pgbackrest1
-
-
-Log on to the container
-
-    docker exec -it pgbackrest1 /bin/bash
-
-Switch to user postgres
-
-    sudo -E -u postgres /bin/bash -l
-
-### Configure backup server
-
-     mkdir -p /pgha/data/pgbackrest
-
-cd to config folder
-
-    cd /pgha/data/pgbackrest
 
 
 ### Create pgbackrest.conf
+
+On pgha5 as user postgres edit the **/pgha/config/pgbackrest.conf** file and add the following to it.
 
     [global]
     
@@ -1406,7 +1382,7 @@ cd to config folder
     pg3-path=/pgdata/17/data
 
 
-### Explanation
+### Explanation of the settings
 
 - **repo1-path** defines the absolute path of where our backups will be saved on the repository server which in our tutorial here is pgbackrest1.
 - **repo1-retention-archive-type** defines how the retention policy is applied to the archived WAL segments. Setting it to full means that all WAL segments required to restore any retained full backup will be kept. If you delete a full backup, all WAL files associated only with that backup will be removed.
@@ -1424,21 +1400,6 @@ Individual postgres instances are defined after the stanza name. For example
  
 The same would apply to other hosts groups like pg1 and pg3
 
-**A little cleanup**
-
-Since the default pgbackrest configuration file is in /etcd/ and we are configuring our environment to use a centralized location for configuration located in **/pgha/config** ,  we will need to make a few minor changes.
-
-As user **root**
-
-    cd /etc
-    mv pgbackrest.conf  pgbackrest.conf.save
-    ln -s /pgha/config/pgbackrest.conf pgbackrest.conf
-
-In the future, I will include  this as part of the Docker image. But for now, I just want to get this tutorial done.
-
-Back as user **postgres** again
-
-    sudo -E -u postgres /bin/bash -l
    
 ### Create pgbackrest.conf on database servers
 
@@ -1461,23 +1422,15 @@ Add the following to it's content and save.
     
     pg1-path=/pgdata/17/data
 
-Save the above and propagate to the additional database servers
+Save the above and propagate **ONLY TO** the additional database servers. 
 
     scp pgbackrest.conf pgha2:/pgha/config/
     scp pgbackrest.conf pgha3:/pgha/config/
 
-### Additional cleanup
-
-Once again, lets change the file locations and privileges.  **We must do this on all the database servers as user root**
-
-    cd /etc
-    mv pgbackrest.conf  pgbackrest.conf.save
-    ln -s /pgha/config/pgbackrest.conf pgbackrest.conf
-
 
 ### Create the stanza
 
-Back on the pgbackrest1 server ( repo server )
+On the repo server **pgbackrest1** as user postgres
 
     pgbackrest --stanza=pgha stanza-create
     
@@ -1537,12 +1490,27 @@ On pgha1 as user postgres
     retry_timeout: 10
     ttl: 30
 
+You will need to restart the cluster again.
 
-Once you made the changes, validate things are working as expected.
+    patronictl -c /pgha/config/patroni.yaml restart pgha_patroni_cluster
+    
+    + Cluster: pgha_patroni_cluster (7575415324175827441) ----+-----+------------+-----+
+    | Member |  Host |   Role  |   State   | TL | Receive LSN | Lag | Replay LSN | Lag |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
+    | pgha1  | pgha1 | Leader  | running   |  4 |             |     |            |     |
+    | pgha2  | pgha2 | Replica | streaming |  4 |   0/A000000 |   0 |  0/A000000 |   0 |
+    | pgha3  | pgha3 | Replica | streaming |  4 |   0/A000000 |   0 |  0/A000000 |   0 |
+    +--------+-------+---------+-----------+----+-------------+-----+------------+-----+
+    
+    When should the restart take place (e.g. 2025-11-22T07:34)  [now]:
+    Are you sure you want to restart members pgha1, pgha2, pgha3? [y/N]: y
+    Restart if the PostgreSQL version is less than provided (e.g. 9.5.2)  []:
+    Success: restart on member pgha1
+    Success: restart on member pgha2
+    Success: restart on member pgha3
 
-You can do this several ways. 
 
-Identify the lates log file
+At this point you should be able to tail the latest postgres log file
 
     cd $PGDATA
     cd log
@@ -1550,110 +1518,70 @@ Identify the lates log file
 
 From the list shown,  it's postgresql-Fri.log
 
-    -rw------- 1 postgres postgres 36467 Nov 17 23:59 postgresql-Mon.log
-    -rw------- 1 postgres postgres  5208 Nov 18 07:03 postgresql-Tue.log
-    -rw------- 1 postgres postgres 14226 Nov 19 22:42 postgresql-Wed.log
-    -rw------- 1 postgres postgres 27208 Nov 20 21:17 postgresql-Thu.log
-    -rw------- 1 postgres postgres  7671 Nov 21 06:07 postgresql-Fri.log
-
-So the rest is simple. Lets force a WAL archive, get the time so we can then see the entry in the log file around the time shown.
-
-    psql -c "select pg_switch_wal(); select now()"
+    -rw------- 1 postgres postgres 21801 Nov 22 06:34 postgresql-Sat.log
     
-     pg_switch_wal
-    ---------------
-     0/30000180
-    (1 row)
-    
-                  now
-    -------------------------------
-     2025-11-21 06:08:43.687362+00
-    (1 row)
 
-Now tail the log file and look at the end. You should see archive-push log entry with a timestamp close to the one extracted in the sql above.
+From one terminal run
 
-    tail postgresql-Fri.log
-    
-    2025-11-21 06:04:21.701 P00   INFO: pushed WAL file '00000008000000000000002E' to the archive
-    2025-11-21 06:04:21.801 P00   INFO: archive-push command end: completed successfully (309ms)
-    2025-11-21 06:05:24.885 P00   INFO: archive-push command begin 2.57.0: [/pgdata/17/data/pg_wal/00000008000000000000002F] --exec-id=4838-684c9b79 --log-level-console=info --log-level-file=debug --pg1-path=/pgdata/17/data --process-max=4 --repo1-host=pgbackrest1 --repo1-host-user=postgres --stanza=pgha
-    2025-11-21 06:05:25.098 P00   INFO: pushed WAL file '00000008000000000000002F' to the archive
-    2025-11-21 06:05:25.198 P00   INFO: archive-push command end: completed successfully (314ms)
-    2025-11-21 06:07:02.088 UTC [] [4798]: [1-1] user=,db=,host= LOG:  checkpoint starting: time
-    2025-11-21 06:07:02.140 UTC [] [4798]: [2-1] user=,db=,host= LOG:  checkpoint complete: wrote 3 buffers (0.0%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.004 s, sync=0.002 s, total=0.053 s; sync files=2, longest=0.001 s, average=0.001 s; distance=49152 kB, estimate=49152 kB; lsn=0/300000B8, redo lsn=0/30000060
-    2025-11-21 06:08:43.703 P00   INFO: archive-push command begin 2.57.0: [/pgdata/17/data/pg_wal/000000080000000000000030] --exec-id=4851-4ff4f1f9 --log-level-console=info --log-level-file=debug --pg1-path=/pgdata/17/data --process-max=4 --repo1-host=pgbackrest1 --repo1-host-user=postgres --stanza=pgha
-    2025-11-21 06:08:43.916 P00   INFO: pushed WAL file '000000080000000000000030' to the archive
-    2025-11-21 06:08:44.016 P00   INFO: archive-push command end: completed successfully (315ms)
+    tail -f postgresql-Sat.log
+
+From another terminal run
+
+    psql -h pgha1 -c "SELECT pg_switch_wal()"
+
+Your terminal with the tail command should then display the archiving results.
 
 
-You could also do the following.
+    2025-11-22 06:39:06.756 UTC [] [1078]: [1-1] user=,db=,host= LOG:  checkpoint starting: time
+    2025-11-22 06:39:06.795 UTC [] [1078]: [2-1] user=,db=,host= LOG:  checkpoint complete: wrote 3 buffers (0.0%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.004 s, sync=0.002 s, total=0.040 s; sync files=2, longest=0.001 s, average=0.001 s; distance=16384 kB, estimate=16384 kB; lsn=0/C0000B8, redo lsn=0/C000060
+    2025-11-22 06:41:01.649 P00   INFO: archive-push command begin 2.57.0: [/pgdata/17/data/pg_wal/00000004000000000000000C] --exec-id=1114-4ecccb96 --log-level-console=info --log-level-file=debug --pg1-path=/pgdata/17/data --process-max=4 --repo1-host=pgbackrest1 --repo1-host-user=postgres --stanza=pgha
+    2025-11-22 06:41:01.862 P00   INFO: pushed WAL file '00000004000000000000000C' to the archive
+    2025-11-22 06:41:01.962 P00   INFO: archive-push command end: completed successfully (315ms)
 
-     psql -c "SELECT * FROM pg_stat_archiver;"
-     
-     archived_count |    last_archived_wal     |      last_archived_time       | failed_count |     last_failed_wal      |       last_failed_time        |          stats_reset
-    ----------------+--------------------------+-------------------------------+--------------+--------------------------+-------------------------------+-------------------------------
-                 41 | 000000080000000000000030 | 2025-11-21 06:08:44.017249+00 |            6 | 000000080000000000000024 | 2025-11-20 20:26:46.658215+00 | 2025-11-17 23:59:17.537165+00
-    (1 row)
-
-Take note of the archived_count
-
-     psql -c "SELECT pg_switch_wal()"
-     
-     pg_switch_wal
-    ---------------
-     0/31000180
-    (1 row)
-
-After forcing another WAL switch, see what the new archived_count is
-
-    psql -c "SELECT * FROM pg_stat_archiver;"
-    
-     archived_count |    last_archived_wal     |      last_archived_time       | failed_count |     last_failed_wal      |       last_failed_time        |          stats_reset
-    ----------------+--------------------------+-------------------------------+--------------+--------------------------+-------------------------------+-------------------------------
-                 42 | 000000080000000000000031 | 2025-11-21 06:13:06.068236+00 |            6 | 000000080000000000000024 | 2025-11-20 20:26:46.658215+00 | 2025-11-17 23:59:17.537165+00
-    (1 row)
 
 
 ### Create a backup
 
-Backups need to be started on the repo server ( pgbackrest1 ) as user postgres. We can log on to pgbackres1 or, since we have trusted ssh connection for user postgres across our environment, we could also simply run an ssh command.
+Backups need to be started on the repo server ( pgbackrest1 ) as user postgres.  Remember pgbackrest1 is an alias to pgha5 which is where we are hosting our repository.
 
     ssh pgbackrest1 "pgbackrest  --stanza=pgha --type=full backup"
 
 This should kick off a full backup
 
-    2025-11-21 06:37:27.552 P00   INFO: backup command begin 2.57.0: --backup-standby=y --delta --exec-id=1062-b359b7a5 --log-level-console=info --log-level-file=info --pg1-host=pgha1 --pg2-host=pgha2 --pg3-host=pgha3 --pg1-host-user=postgres --pg2-host-user=postgres --pg3-host-user=postgres --pg1-path=/pgdata/17/data --pg2-path=/pgdata/17/data --pg3-path=/pgdata/17/data --pg1-port=5432 --pg2-port=5432 --pg3-port=5432 --process-max=2 --repo1-path=/pgha/data/pgbackrest --repo1-retention-archive-type=full --repo1-retention-full=2 --stanza=pgha --start-fast --type=full
-    2025-11-21 06:37:27.958 P00   INFO: execute non-exclusive backup start: backup begins after the requested immediate checkpoint completes
-    2025-11-21 06:37:28.030 P00   INFO: backup start archive = 000000080000000000000036, lsn = 0/36000028
-    2025-11-21 06:37:28.030 P00   INFO: wait for replay on the standby to reach 0/36000028
-    2025-11-21 06:37:28.183 P00   INFO: replay on the standby reached 0/36000028
-    2025-11-21 06:37:28.183 P00   INFO: check archive for segment 000000080000000000000036
-    2025-11-21 06:37:32.065 P00   INFO: execute non-exclusive backup stop and wait for all WAL segments to archive
-    2025-11-21 06:37:32.080 P00   INFO: backup stop archive = 000000080000000000000037, lsn = 0/37000088
-    2025-11-21 06:37:32.103 P00   INFO: check archive for segment(s) 000000080000000000000036:000000080000000000000037
-    2025-11-21 06:37:32.513 P00   INFO: new backup label = 20251121-063727F
-    2025-11-21 06:37:32.555 P00   INFO: full backup size = 64.1MB, file total = 1279
-    2025-11-21 06:37:32.555 P00   INFO: backup command end: completed successfully (5004ms)
-    2025-11-21 06:37:32.555 P00   INFO: expire command begin 2.57.0: --exec-id=1062-b359b7a5 --log-level-console=info --log-level-file=info --repo1-path=/pgha/data/pgbackrest --repo1-retention-archive-type=full --repo1-retention-full=2 --stanza=pgha
-    2025-11-21 06:37:32.656 P00   INFO: expire command end: completed successfully (101ms)
+    2025-11-22 06:43:36.389 P00   INFO: backup command begin 2.57.0: --backup-standby=y --delta --exec-id=506-36e0cca9 --log-level-console=info --log-level-file=info --pg1-host=pgha1 --pg2-host=pgha2 --pg3-host=pgha3 --pg1-path=/pgdata/17/data --pg2-path=/pgdata/17/data --pg3-path=/pgdata/17/data --pg1-port=5432 --pg2-port=5432 --pg3-port=5432 --process-max=2 --repo1-path=/pgha/data/pgbackrest --repo1-retention-archive-type=full --repo1-retention-full=2 --stanza=pgha --start-fast --type=full
+    2025-11-22 06:43:36.688 P00   INFO: execute non-exclusive backup start: backup begins after the requested immediate checkpoint completes
+    2025-11-22 06:43:36.804 P00   INFO: backup start archive = 00000004000000000000000E, lsn = 0/E000028
+    2025-11-22 06:43:36.804 P00   INFO: wait for replay on the standby to reach 0/E000028
+    2025-11-22 06:43:36.918 P00   INFO: replay on the standby reached 0/E000028
+    2025-11-22 06:43:36.918 P00   INFO: check archive for prior segment 00000004000000000000000D
+    2025-11-22 06:43:39.492 P00   INFO: execute non-exclusive backup stop and wait for all WAL segments to archive
+    2025-11-22 06:43:39.501 P00   INFO: backup stop archive = 00000004000000000000000E, lsn = 0/E000158
+    2025-11-22 06:43:39.545 P00   INFO: check archive for segment(s) 00000004000000000000000E:00000004000000000000000E
+    2025-11-22 06:43:39.954 P00   INFO: new backup label = 20251122-064336F
+    2025-11-22 06:43:40.025 P00   INFO: full backup size = 22.2MB, file total = 974
+    2025-11-22 06:43:40.025 P00   INFO: backup command end: completed successfully (3637ms)
+    2025-11-22 06:43:40.025 P00   INFO: expire command begin 2.57.0: --exec-id=506-36e0cca9 --log-level-console=info --log-level-file=info --repo1-path=/pgha/data/pgbackrest --repo1-retention-archive-type=full --repo1-retention-full=2 --stanza=pgha
+    2025-11-22 06:43:40.126 P00   INFO: expire command end: completed successfully (101ms)
 
  
 We can now check our repo status for backups with the **info** flag
 
     ssh pgbackrest1 "pgbackrest  --stanza=pgha info"
-    
+   
+   Which gives us information about our repo and backups
+
     stanza: pgha
         status: ok
         cipher: none
     
         db (current)
-            wal archive min/max (17): 000000080000000000000036/000000080000000000000037
+            wal archive min/max (17): 00000004000000000000000A/00000004000000000000000E
     
-            full backup: 20251121-063727F
-                timestamp start/stop: 2025-11-21 06:37:27+00 / 2025-11-21 06:37:32+00
-                wal start/stop: 000000080000000000000036 / 000000080000000000000037
-                database size: 64.1MB, database backup size: 64.1MB
-                repo1: backup set size: 7.8MB, backup size: 7.8MB
+            full backup: 20251122-064336F
+                timestamp start/stop: 2025-11-22 06:43:36+00 / 2025-11-22 06:43:39+00
+                wal start/stop: 00000004000000000000000E / 00000004000000000000000E
+                database size: 22.2MB, database backup size: 22.2MB
+                repo1: backup set size: 2.9MB, backup size: 2.9MB
 
 
 
@@ -1662,3 +1590,7 @@ We can now check our repo status for backups with the **info** flag
 
 https://pgbackrest.org/user-guide.html
 
+
+## More to come ...
+
+There is more to come. Please check in regularly to check for updates.
