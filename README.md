@@ -124,15 +124,15 @@ The core misunderstanding is failing to distinguish between the Patroni cluster 
 
 **Patroni/Postgres Nodes (Data):**
 
-*These nodes are the actual database servers. Their count determines how many copies of the data you have and where the Primary can run.*
+These nodes are the actual database servers. Their count determines how many copies of the data you have and where the Primary can run.
 
 **etcd Nodes (Consensus):**
 
-*These nodes hold the metadata about the cluster (who the current Primary is, who the members are, etc.). They use an algorithm like Raft to ensure this metadata is consistently agreed upon by a quorum.*
+These nodes hold the metadata about the cluster (who the current Primary is, who the members are, etc.). They use an algorithm like Raft to ensure this metadata is consistently agreed upon by a quorum.
 
 The availability of your Patroni cluster relies entirely on the availability of its etcd quorum. If the etcd cluster loses its quorum, Patroni cannot safely elect a new Primary or switch roles, even if the underlying Postgres data nodes are healthy.
 
-On a side note, this heavy dependency on etcd and the Patroni layer managing Postgres, is why I favor pgPool in some cases.
+**On a side note, this heavy dependency on etcd and the Patroni layer managing Postgres, is why I favor pgPool in some cases.**
 
 ## The correct etcd quorum sizing rule
 
@@ -1686,7 +1686,7 @@ That's it. We now have our pgbackrest1 container up and running on the same netw
     docker ps | grep pgbackrest
     c3ff6cbda7f7   rocky9-pg17-bundle   "/bin/bash -c /entry…"   5 minutes ago   Up 5 minutes   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6438->5432/tcp, [::]:6438->5432/tcp, 0.0.0.0:9998->9999/tcp, [::]:9998->9999/tcp   pgbackrest1
 
-You will need to apply the same new directorieand privileges as noted above. However, since I am constantly enhancing the Docker image, this may already be in place.  Again, this is just informational so you have an understanding of how we create the environment.
+You will need to apply the same new directories and privileges as noted above. However, since I am constantly enhancing the Docker image, this may already be in place.  Again, this is just informational so you have an understanding of how we create the environment.
 
 
 ## More to come
