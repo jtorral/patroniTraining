@@ -1,3 +1,4 @@
+
 ## Table of Contents
 
 - [Deploying and Securing High Availability Postgres with Patroni and pgBackrest](#deploying-and-securing-high-availability-postgres-with-patroni-and-pgbackrest)
@@ -401,7 +402,7 @@ Keep in mind, this was all optional incase you want to setup etcd and pgBackrest
 
 ## setup logging folders and permissions
 
-**The necessary configuration has already been implemented within the rocky9-pg17-bundle Docker image, making this step optional. Should you wish to gain a thorough understanding of the underlying process, please consult the Appendix below for details.**
+**The necessary configuration has already been implemented within the rocky9-pg17-bundle Docker image, making this step optional. Should you wish to gain a thorough understanding of the underlying process, please consult the   - [Apendix](#apendix) below for details.**
 
 
 ## Create etcd configuration files
@@ -877,11 +878,11 @@ If set to true, this node will not be considered for synchronous replication.
 
 ## Starting patroni
 
-The Docker image contains the scripts **/startPatroni** and **/stopPatroni**. We can use these scripts to control our patroni service on the Docker container. 
+The Docker image contains the scripts **/startPatroni** and **/stopPatroni**. We can use these scripts to control our patroni service on the Docker container.
 
     /startPatroni
 
-Or you can start it manually using the following command.  You will need to keep track of the pid for stopping it later.  The provided script do this for you. 
+Or you can start it manually using the following command.  You will need to keep track of the pid for stopping it later.  The provided script do this for you.
 
     patroni /pgha/config/patroni.yaml >> /var/log/patroni/patroni.log 2>&1 &
 
@@ -1129,11 +1130,11 @@ Changes to connection authentication (pg_hba) require postgres to reload its con
 
     patronictl reload <cluster_name>
 
-Note: A full restart is often not necessary for pg_hba changes, but a reload is required.  Validate this by once again running 
+Note: A full restart is often not necessary for pg_hba changes, but a reload is required.  Validate this by once again running
 
     cat $PGDATA/pg_hba.conf
 
-In the rare occasion that you do not see the changes in the file, you may have to restart the service instaed using 
+In the rare occasion that you do not see the changes in the file, you may have to restart the service instaed using
 
     patronictl reload <cluster_name>
 
@@ -1380,7 +1381,7 @@ With all that out of the way, lets start.
 
 Since we already have two extra nodes on our cluster for etcd, we will use one of those nodes for the pgbackrest repo host.  At the beginning of this tutorial,  we configured the /etc/hosts file to use the alias pgbackrest1 with the host pgha5.  With that in mind,  pgha5 will be the server we will run pgbackrest on and there is no need to create an extra pgbackrest repo server.
 
-
+If you wan't to add a dedicated server and go through the process, view the    - [Apendix](#apendix) for more details.
 
 ### Create pgbackrest configuration file
 
@@ -1635,7 +1636,7 @@ The following steps are what have been omitted from the above due to Docker auto
 
 **As user root** perform the following on each server.
 
-For logging purposes 
+For logging purposes
 
     mkdir -p /var/log/etcd
     mkdir -p /var/log/patroni
@@ -1685,10 +1686,9 @@ That's it. We now have our pgbackrest1 container up and running on the same netw
     docker ps | grep pgbackrest
     c3ff6cbda7f7   rocky9-pg17-bundle   "/bin/bash -c /entry…"   5 minutes ago   Up 5 minutes   22/tcp, 80/tcp, 443/tcp, 2379-2380/tcp, 5000-5001/tcp, 6032-6033/tcp, 6132-6133/tcp, 7000/tcp, 8008/tcp, 8432/tcp, 9898/tcp, 0.0.0.0:6438->5432/tcp, [::]:6438->5432/tcp, 0.0.0.0:9998->9999/tcp, [::]:9998->9999/tcp   pgbackrest1
 
-You will need to apply the same new directories and privileges as noted above. However, since I am constantly enhancing the Docker image, this may already be in place.  Again, this is just informational so you have an understanding of how we create the environment.
+You will need to apply the same new directorieand privileges as noted above. However, since I am constantly enhancing the Docker image, this may already be in place.  Again, this is just informational so you have an understanding of how we create the environment.
 
 
 ## More to come
 
 There is more to come. Please check in regularly to check for updates.
-
