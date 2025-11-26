@@ -206,6 +206,11 @@ You will need to clone the repository and build the base Docker image from the p
 
     docker build -t rocky9-pg17-bundle .
 
+If you run into issues it could be related to versions and dependencies on OS images and packges. Try the following build command instead to identify the errors
+
+    docker build --progress=plain -t rocky9-pg17-bundle .
+
+
 **Image notes**
 
 It's important to note that the resulting rocky9-pg17-bundle image is not a lightweight image. While modern container practices often favor minimal base images, this particular image is feature packed.
